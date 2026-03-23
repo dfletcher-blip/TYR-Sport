@@ -1,0 +1,8 @@
+# TYR Sport CRM Agent — Required Packages
+# Install all of these by running:
+#   pip install -r requirements.txt
+
+anthropic>=0.40.0      # Claude AI
+msal>=1.28.0           # Microsoft login (Azure authentication)
+requests>=2.32.0       # HTTP requests to CRM API
+python-dotenv>=1.0.0   # Reads credentials from .env file
