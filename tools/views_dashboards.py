@@ -384,7 +384,7 @@ def reorder_dashboard_components(dashboard_id: str, move_to_top: list) -> dict:
     new_formxml = ET.tostring(root, encoding="unicode")
 
     # 5. Patch the dashboard
-    crm_patch(f"systemforms({dashboard_id})", {"formxml": new_formxml})
+    crm_patch("systemforms", dashboard_id, {"formxml": new_formxml})
 
     return {
         "success": True,

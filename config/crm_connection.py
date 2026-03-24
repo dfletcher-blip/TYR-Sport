@@ -144,6 +144,7 @@ def crm_patch(endpoint: str, record_id: str, data: dict) -> dict:
         "OData-Version": "4.0",
         "Accept": "application/json",
         "Content-Type": "application/json",
+        "If-Match": "*",
     }
 
     response = requests.patch(url, headers=headers, json=data)
