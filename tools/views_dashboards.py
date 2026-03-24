@@ -383,6 +383,8 @@ def reorder_dashboard_components(dashboard_id: str, move_to_top: list) -> dict:
     if not formxml:
         return {"error": "Dashboard has no formxml to reorder"}
 
+    # Use the resolved GUID from details, not the raw argument (which may be a name)
+    record_id = details["id"]
     form_type = details.get("form_type", "system")  # "system" or "user"
     endpoint = "systemforms" if form_type == "system" else "userforms"
 
@@ -437,23 +439,27 @@ def reorder_dashboard_components(dashboard_id: str, move_to_top: list) -> dict:
     # 5. Serialize back to XML string
     new_formxml = ET.tostring(root, encoding="unicode")
 
-    # 6. Patch the dashboard record
-    crm_patch(endpoint, dashboard_id, {"formxml": new_formxml})
+    # 6. Patch the dashboard record using the resolved GUID
+    crm_patch(endpoint, record_id, {"formxml": new_formxml})
 
     # 7. For system dashboards, publish so the change is visible immediately
     published = False
+    publish_error = None
     if form_type == "system":
         publish_xml = (
             f"<importexportxml><dashboards>"
-            f"<dashboard>{dashboard_id}</dashboard>"
+            f"<dashboard>{record_id}</dashboard>"
             f"</dashboards></importexportxml>"
         )
-        crm_action("PublishXml", {"ParameterXml": publish_xml})
-        published = True
+        try:
+            crm_action("PublishXml", {"ParameterXml": publish_xml})
+            published = True
+        except Exception as e:
+            publish_error = str(e)
 
-    return {
+    result = {
         "success": True,
-        "dashboard_id": dashboard_id,
+        "dashboard_id": record_id,
         "dashboard_name": details["name"],
         "form_type": form_type,
         "published": published,
@@ -466,6 +472,12 @@ def reorder_dashboard_components(dashboard_id: str, move_to_top: list) -> dict:
             f"{len(reordered)} row(s) moved to the top."
         ),
     }
+    if publish_error:
+        result["publish_warning"] = (
+            f"Patch succeeded but PublishXml failed: {publish_error}. "
+            "The change is saved but may not be visible until customizations are published."
+        )
+    return result
 
 
 def get_views_summary() -> dict:
