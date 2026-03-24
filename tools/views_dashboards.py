@@ -274,6 +274,128 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
     }
 
 
+def get_dashboard_details(name_or_id: str) -> dict:
+    """
+    Fetch a specific dashboard by name or ID, including its full layout XML.
+
+    name_or_id: the dashboard's display name (e.g. "D2C/Crossfit") or its GUID.
+
+    Returns the dashboard's id, name, description, and formxml.
+    """
+    import re
+    guid_pattern = re.compile(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE
+    )
+
+    if guid_pattern.match(name_or_id):
+        params = {
+            "$select": "systemformid,name,description,formxml,formactivationstate",
+            "$filter": f"systemformid eq {name_or_id} and type eq 0",
+        }
+    else:
+        escaped = name_or_id.replace("'", "''")
+        params = {
+            "$select": "systemformid,name,description,formxml,formactivationstate",
+            "$filter": f"type eq 0 and contains(name,'{escaped}')",
+        }
+
+    result = crm_get("systemforms", params)
+    dashboards = result.get("value", [])
+
+    if not dashboards:
+        return {"error": f"No dashboard found matching '{name_or_id}'"}
+
+    d = dashboards[0]
+    return {
+        "id": d.get("systemformid"),
+        "name": d.get("name"),
+        "description": d.get("description", ""),
+        "status": "Active" if d.get("formactivationstate") == 1 else "Inactive",
+        "formxml": d.get("formxml", ""),
+    }
+
+
+def reorder_dashboard_components(dashboard_id: str, move_to_top: list) -> dict:
+    """
+    Reorder a dashboard's components so that specific ones appear at the top.
+
+    dashboard_id: the GUID of the dashboard (get this from get_dashboard_details).
+    move_to_top: list of component label substrings to move to the top,
+                 e.g. ["Teams by owner", "Teams by status"]
+                 Matching is case-insensitive and partial.
+
+    The function reorders rows within each section of the dashboard so rows
+    containing any of the listed labels appear first.
+    Returns a confirmation with the new component order.
+    """
+    import xml.etree.ElementTree as ET
+
+    # 1. Fetch the dashboard
+    details = get_dashboard_details(dashboard_id)
+    if "error" in details:
+        return details
+
+    formxml = details.get("formxml", "")
+    if not formxml:
+        return {"error": "Dashboard has no formxml to reorder"}
+
+    # 2. Parse the XML
+    try:
+        root = ET.fromstring(formxml)
+    except ET.ParseError as e:
+        return {"error": f"Could not parse dashboard XML: {e}"}
+
+    move_lower = [m.lower() for m in move_to_top]
+
+    def row_matches(row_el):
+        """Return True if any cell label in this row matches a move_to_top entry."""
+        for label_el in row_el.iter("label"):
+            desc = (label_el.get("description") or "").lower()
+            if any(m in desc for m in move_lower):
+                return True
+        return False
+
+    def collect_row_labels(row_el):
+        return [label_el.get("description", "") for label_el in row_el.iter("label")]
+
+    # 3. For every <rows> container, move matching rows to the front
+    reordered = []
+    for rows_el in root.iter("rows"):
+        all_rows = list(rows_el)
+        priority = [r for r in all_rows if row_matches(r)]
+        rest = [r for r in all_rows if not row_matches(r)]
+        if priority:
+            new_order = priority + rest
+            for child in all_rows:
+                rows_el.remove(child)
+            for child in new_order:
+                rows_el.append(child)
+            reordered.extend([collect_row_labels(r) for r in priority])
+
+    if not reordered:
+        return {
+            "warning": f"No rows found containing labels matching {move_to_top}. "
+                       "No changes were made. Check the exact label names with get_dashboard_details.",
+            "dashboard_id": dashboard_id,
+            "dashboard_name": details["name"],
+        }
+
+    # 4. Serialize back to XML string
+    new_formxml = ET.tostring(root, encoding="unicode")
+
+    # 5. Patch the dashboard
+    crm_patch(f"systemforms({dashboard_id})", {"formxml": new_formxml})
+
+    return {
+        "success": True,
+        "dashboard_id": dashboard_id,
+        "dashboard_name": details["name"],
+        "moved_to_top": reordered,
+        "message": f"Dashboard '{details['name']}' updated — "
+                   f"{len(reordered)} row(s) moved to the top.",
+    }
+
+
 def get_views_summary() -> dict:
     """
     Get a summary of all views across key entities.

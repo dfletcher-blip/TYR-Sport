@@ -43,6 +43,8 @@ from tools.views_dashboards import (
     list_dashboards,
     create_dashboard,
     get_views_summary,
+    get_dashboard_details,
+    reorder_dashboard_components,
 )
 
 
@@ -114,6 +116,8 @@ TOOL_REGISTRY = {
     "list_dashboards":             list_dashboards,
     "create_dashboard":            create_dashboard,
     "get_views_summary":           get_views_summary,
+    "get_dashboard_details":       get_dashboard_details,
+    "reorder_dashboard_components": reorder_dashboard_components,
 }
 
 
@@ -299,6 +303,33 @@ TOOL_DEFINITIONS = [
         "name": "get_views_summary",
         "description": "Get a summary of all views across contacts, leads, accounts, and opportunities.",
         "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_dashboard_details",
+        "description": "Fetch a specific dashboard by name or ID. Returns the full layout XML and component labels — use this to inspect a dashboard before reordering it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name_or_id": {"type": "string", "description": "The dashboard display name (e.g. 'D2C/Crossfit') or its GUID"},
+            },
+            "required": ["name_or_id"],
+        },
+    },
+    {
+        "name": "reorder_dashboard_components",
+        "description": "Reorder a dashboard so that specific components appear at the top. Always call get_dashboard_details first to get the dashboard ID and confirm the exact component label names.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "dashboard_id": {"type": "string", "description": "The GUID of the dashboard to modify"},
+                "move_to_top": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of component label substrings to move to the top (case-insensitive partial match), e.g. ['Teams by owner', 'Teams by status']",
+                },
+            },
+            "required": ["dashboard_id", "move_to_top"],
+        },
     },
 ]
 
