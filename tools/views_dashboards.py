@@ -396,35 +396,62 @@ def reorder_dashboard_components(dashboard_id: str, move_to_top: list) -> dict:
 
     move_lower = [m.lower() for m in move_to_top]
 
-    def row_matches(row_el):
-        for label_el in row_el.iter("label"):
-            desc = (label_el.get("description") or "").lower()
-            if any(m in desc for m in move_lower):
+    def cell_labels(cell_el):
+        return [lb.get("description", "") for lb in cell_el.iter("label") if lb.get("description")]
+
+    def cell_matches(cell_el):
+        for desc in cell_labels(cell_el):
+            if any(m in desc.lower() for m in move_lower):
                 return True
         return False
 
-    def collect_row_labels(row_el):
-        return [label_el.get("description", "") for label_el in row_el.iter("label")]
+    def component_groups(rows_el):
+        """
+        Group <row> elements into per-component chunks.
+
+        A component's leading row contains a <cell> element; that cell's
+        rowspan attribute tells us how many subsequent rows belong to the
+        same component (they are empty continuation rows). Returns a list
+        of (leading_cell_el, [row_el, ...]) tuples.
+        """
+        groups = []
+        all_rows = list(rows_el)
+        i = 0
+        while i < len(all_rows):
+            row = all_rows[i]
+            cells = [c for c in row if c.tag == "cell"]
+            if cells:
+                cell = cells[0]
+                span = max(1, int(cell.get("rowspan", "1")))
+                groups.append((cell, all_rows[i : i + span]))
+                i += span
+            else:
+                # Orphan empty row — keep as its own group
+                groups.append((None, [row]))
+                i += 1
+        return groups
 
     # 3. Collect all labels for diagnostics before reordering
     all_labels_before = []
     for rows_el in root.iter("rows"):
-        for row_el in rows_el:
-            all_labels_before.append(collect_row_labels(row_el))
+        for cell_el, _ in component_groups(rows_el):
+            if cell_el is not None:
+                all_labels_before.append(cell_labels(cell_el))
 
-    # 4. For every <rows> container, move matching rows to the front
+    # 4. For every <rows> container, move matching component groups to the front
     reordered = []
     for rows_el in root.iter("rows"):
-        all_rows = list(rows_el)
-        priority = [r for r in all_rows if row_matches(r)]
-        rest = [r for r in all_rows if not row_matches(r)]
+        groups = component_groups(rows_el)
+        priority = [(c, rows) for c, rows in groups if c is not None and cell_matches(c)]
+        rest     = [(c, rows) for c, rows in groups if not (c is not None and cell_matches(c))]
         if priority:
-            new_order = priority + rest
-            for child in all_rows:
+            new_groups = priority + rest
+            for child in list(rows_el):
                 rows_el.remove(child)
-            for child in new_order:
-                rows_el.append(child)
-            reordered.extend([collect_row_labels(r) for r in priority])
+            for _, row_group in new_groups:
+                for row in row_group:
+                    rows_el.append(row)
+            reordered.extend([cell_labels(c) for c, _ in priority])
 
     if not reordered:
         return {
