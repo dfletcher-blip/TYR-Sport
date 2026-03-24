@@ -10,7 +10,7 @@
 import sys, os, json
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from config.crm_connection import crm_get, crm_post, crm_patch
+from config.crm_connection import crm_get, crm_post, crm_patch, crm_action
 
 
 def list_views(entity: str = "contact") -> dict:
@@ -280,38 +280,80 @@ def get_dashboard_details(name_or_id: str) -> dict:
 
     name_or_id: the dashboard's display name (e.g. "D2C/Crossfit") or its GUID.
 
-    Returns the dashboard's id, name, description, and formxml.
+    Searches both system dashboards (systemforms) and personal/user dashboards
+    (userforms). Returns the dashboard's id, name, description, formxml,
+    form_type ("system" or "user"), and a list of all component label names
+    found in the XML — useful for confirming exact label text before reordering.
     """
     import re
+    import xml.etree.ElementTree as ET
+
     guid_pattern = re.compile(
         r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE
     )
 
+    escaped = name_or_id.replace("'", "''")
+
+    # Try system dashboards first
     if guid_pattern.match(name_or_id):
-        params = {
+        sys_params = {
             "$select": "systemformid,name,description,formxml,formactivationstate",
             "$filter": f"systemformid eq {name_or_id} and type eq 0",
         }
     else:
-        escaped = name_or_id.replace("'", "''")
-        params = {
+        sys_params = {
             "$select": "systemformid,name,description,formxml,formactivationstate",
             "$filter": f"type eq 0 and contains(name,'{escaped}')",
         }
 
-    result = crm_get("systemforms", params)
-    dashboards = result.get("value", [])
+    sys_result = crm_get("systemforms", sys_params)
+    sys_rows = sys_result.get("value", [])
 
-    if not dashboards:
-        return {"error": f"No dashboard found matching '{name_or_id}'"}
+    # Fall back to personal/user dashboards
+    usr_rows = []
+    if not sys_rows:
+        if guid_pattern.match(name_or_id):
+            usr_params = {
+                "$select": "userformid,name,description,formxml",
+                "$filter": f"userformid eq {name_or_id} and type eq 0",
+            }
+        else:
+            usr_params = {
+                "$select": "userformid,name,description,formxml",
+                "$filter": f"type eq 0 and contains(name,'{escaped}')",
+            }
+        usr_result = crm_get("userforms", usr_params)
+        usr_rows = usr_result.get("value", [])
 
-    d = dashboards[0]
+    if not sys_rows and not usr_rows:
+        return {"error": f"No dashboard found matching '{name_or_id}' in system or user dashboards"}
+
+    is_system = bool(sys_rows)
+    d = sys_rows[0] if is_system else usr_rows[0]
+    id_field = "systemformid" if is_system else "userformid"
+    formxml = d.get("formxml", "")
+
+    # Extract all label descriptions from the formxml for diagnostics
+    component_labels = []
+    if formxml:
+        try:
+            root = ET.fromstring(formxml)
+            component_labels = list(dict.fromkeys(
+                label_el.get("description", "")
+                for label_el in root.iter("label")
+                if label_el.get("description")
+            ))
+        except ET.ParseError:
+            pass
+
     return {
-        "id": d.get("systemformid"),
+        "id": d.get(id_field),
         "name": d.get("name"),
         "description": d.get("description", ""),
         "status": "Active" if d.get("formactivationstate") == 1 else "Inactive",
-        "formxml": d.get("formxml", ""),
+        "form_type": "system" if is_system else "user",
+        "formxml": formxml,
+        "component_labels": component_labels,
     }
 
 
@@ -325,12 +367,14 @@ def reorder_dashboard_components(dashboard_id: str, move_to_top: list) -> dict:
                  Matching is case-insensitive and partial.
 
     The function reorders rows within each section of the dashboard so rows
-    containing any of the listed labels appear first.
+    containing any of the listed labels appear first, then patches the record
+    back. For system dashboards, PublishXml is called automatically so the
+    change is immediately visible.
     Returns a confirmation with the new component order.
     """
     import xml.etree.ElementTree as ET
 
-    # 1. Fetch the dashboard
+    # 1. Fetch the dashboard (searches both systemforms and userforms)
     details = get_dashboard_details(dashboard_id)
     if "error" in details:
         return details
@@ -338,6 +382,9 @@ def reorder_dashboard_components(dashboard_id: str, move_to_top: list) -> dict:
     formxml = details.get("formxml", "")
     if not formxml:
         return {"error": "Dashboard has no formxml to reorder"}
+
+    form_type = details.get("form_type", "system")  # "system" or "user"
+    endpoint = "systemforms" if form_type == "system" else "userforms"
 
     # 2. Parse the XML
     try:
@@ -348,7 +395,6 @@ def reorder_dashboard_components(dashboard_id: str, move_to_top: list) -> dict:
     move_lower = [m.lower() for m in move_to_top]
 
     def row_matches(row_el):
-        """Return True if any cell label in this row matches a move_to_top entry."""
         for label_el in row_el.iter("label"):
             desc = (label_el.get("description") or "").lower()
             if any(m in desc for m in move_lower):
@@ -358,7 +404,13 @@ def reorder_dashboard_components(dashboard_id: str, move_to_top: list) -> dict:
     def collect_row_labels(row_el):
         return [label_el.get("description", "") for label_el in row_el.iter("label")]
 
-    # 3. For every <rows> container, move matching rows to the front
+    # 3. Collect all labels for diagnostics before reordering
+    all_labels_before = []
+    for rows_el in root.iter("rows"):
+        for row_el in rows_el:
+            all_labels_before.append(collect_row_labels(row_el))
+
+    # 4. For every <rows> container, move matching rows to the front
     reordered = []
     for rows_el in root.iter("rows"):
         all_rows = list(rows_el)
@@ -374,25 +426,45 @@ def reorder_dashboard_components(dashboard_id: str, move_to_top: list) -> dict:
 
     if not reordered:
         return {
-            "warning": f"No rows found containing labels matching {move_to_top}. "
-                       "No changes were made. Check the exact label names with get_dashboard_details.",
+            "warning": "No rows found matching the requested labels — no changes made.",
+            "requested": move_to_top,
+            "labels_found_in_dashboard": all_labels_before,
+            "hint": "Use the exact label text from 'labels_found_in_dashboard' above.",
             "dashboard_id": dashboard_id,
             "dashboard_name": details["name"],
         }
 
-    # 4. Serialize back to XML string
+    # 5. Serialize back to XML string
     new_formxml = ET.tostring(root, encoding="unicode")
 
-    # 5. Patch the dashboard
-    crm_patch("systemforms", dashboard_id, {"formxml": new_formxml})
+    # 6. Patch the dashboard record
+    crm_patch(endpoint, dashboard_id, {"formxml": new_formxml})
+
+    # 7. For system dashboards, publish so the change is visible immediately
+    published = False
+    if form_type == "system":
+        publish_xml = (
+            f"<importexportxml><dashboards>"
+            f"<dashboard>{dashboard_id}</dashboard>"
+            f"</dashboards></importexportxml>"
+        )
+        crm_action("PublishXml", {"ParameterXml": publish_xml})
+        published = True
 
     return {
         "success": True,
         "dashboard_id": dashboard_id,
         "dashboard_name": details["name"],
+        "form_type": form_type,
+        "published": published,
         "moved_to_top": reordered,
-        "message": f"Dashboard '{details['name']}' updated — "
-                   f"{len(reordered)} row(s) moved to the top.",
+        "message": (
+            f"Dashboard '{details['name']}' updated and published — "
+            f"{len(reordered)} row(s) moved to the top."
+            if published else
+            f"Dashboard '{details['name']}' updated — "
+            f"{len(reordered)} row(s) moved to the top."
+        ),
     }
 
 

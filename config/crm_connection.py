@@ -157,6 +157,40 @@ def crm_patch(endpoint: str, record_id: str, data: dict) -> dict:
     return {"updated": True, "record_id": record_id}
 
 
+def crm_action(action_name: str, data: dict = None) -> dict:
+    """
+    Call an unbound Dynamics 365 Web API action (e.g. PublishXml).
+
+    action_name: e.g. "PublishXml"
+    data:        request body as a dict (can be empty)
+
+    Returns the JSON response body, or {"success": True} for 204 responses.
+    """
+    token = get_access_token()
+
+    url = f"{DYNAMICS_URL}/api/data/v9.2/{action_name}"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "OData-MaxVersion": "4.0",
+        "OData-Version": "4.0",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+    response = requests.post(url, headers=headers, json=data or {})
+
+    if not response.ok:
+        raise RuntimeError(
+            f"CRM action '{action_name}' failed ({response.status_code}): {response.text[:500]}"
+        )
+
+    if response.status_code == 204 or not response.content:
+        return {"success": True}
+
+    return response.json()
+
+
 def crm_delete(endpoint: str, record_id: str) -> dict:
     """
     Deletes a record from your CRM.
