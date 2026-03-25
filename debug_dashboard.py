@@ -39,12 +39,12 @@ def fetch_raw(name_or_id: str):
 
     if guid_pattern.match(name_or_id):
         params = {
-            "$select": "systemformid,name,description,formxml,formactivationstate,ismanaged,iscustomizable",
-            "$filter": f"systemformid eq {name_or_id} and type eq 0",
+            "$select": "formid,name,description,formxml,formactivationstate,ismanaged,iscustomizable",
+            "$filter": f"formid eq {name_or_id} and type eq 0",
         }
     else:
         params = {
-            "$select": "systemformid,name,description,formxml,formactivationstate,ismanaged,iscustomizable",
+            "$select": "formid,name,description,formxml,formactivationstate,ismanaged,iscustomizable",
             "$filter": f"type eq 0 and contains(name,'{escaped}')",
         }
 
@@ -142,7 +142,7 @@ def main():
         print("  !! Dashboard not found. Check the name and try again.")
         sys.exit(1)
 
-    id_field = "systemformid" if form_type == "system" else "userformid"
+    id_field = "formid" if form_type == "system" else "userformid"
     record_id   = row[id_field]
     name        = row.get("name", "?")
     formxml     = row.get("formxml", "")
