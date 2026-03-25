@@ -173,7 +173,7 @@ def list_dashboards() -> dict:
     """
     params = {
         "$top": 100,
-        "$select": "systemformid,name,description,formactivationstate,createdon,modifiedon",
+        "$select": "formid,name,description,formactivationstate,createdon,modifiedon",
         "$filter": "type eq 0",  # 0 = Dashboard form type
         "$orderby": "name asc",
     }
@@ -184,7 +184,7 @@ def list_dashboards() -> dict:
     formatted = []
     for d in dashboards:
         formatted.append({
-            "id": d.get("systemformid"),
+            "id": d.get("formid"),
             "name": d.get("name", "Unnamed Dashboard"),
             "description": d.get("description", ""),
             "status": "Active" if d.get("formactivationstate") == 1 else "Inactive",
@@ -297,12 +297,12 @@ def get_dashboard_details(name_or_id: str) -> dict:
     # Try system dashboards first
     if guid_pattern.match(name_or_id):
         sys_params = {
-            "$select": "systemformid,name,description,formxml,formactivationstate",
-            "$filter": f"systemformid eq {name_or_id} and type eq 0",
+            "$select": "formid,name,description,formxml,formactivationstate",
+            "$filter": f"formid eq {name_or_id} and type eq 0",
         }
     else:
         sys_params = {
-            "$select": "systemformid,name,description,formxml,formactivationstate",
+            "$select": "formid,name,description,formxml,formactivationstate",
             "$filter": f"type eq 0 and contains(name,'{escaped}')",
         }
 
@@ -330,7 +330,7 @@ def get_dashboard_details(name_or_id: str) -> dict:
 
     is_system = bool(sys_rows)
     d = sys_rows[0] if is_system else usr_rows[0]
-    id_field = "systemformid" if is_system else "userformid"
+    id_field = "formid" if is_system else "userformid"
     formxml = d.get("formxml", "")
 
     # Extract all label descriptions from the formxml for diagnostics
