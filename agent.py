@@ -36,6 +36,10 @@ from tools.workflows import (
     get_recent_workflow_runs,
     activate_workflow,
     deactivate_workflow,
+    search_workflows,
+    get_workflows_by_entity,
+    retry_failed_workflow_runs,
+    clone_workflow,
 )
 from tools.views_dashboards import (
     list_views,
@@ -165,6 +169,10 @@ TOOL_REGISTRY = {
     "get_recent_workflow_runs":    get_recent_workflow_runs,
     "activate_workflow":           activate_workflow,
     "deactivate_workflow":         deactivate_workflow,
+    "search_workflows":            search_workflows,
+    "get_workflows_by_entity":     get_workflows_by_entity,
+    "retry_failed_workflow_runs":  retry_failed_workflow_runs,
+    "clone_workflow":              clone_workflow,
 
     # Views & dashboard tools
     "list_views":                  list_views,
@@ -354,6 +362,51 @@ TOOL_DEFINITIONS = [
                 "reason": {"type": "string", "description": "Reason for deactivating"},
             },
             "required": ["workflow_id"],
+        },
+    },
+    {
+        "name": "search_workflows",
+        "description": "Search for workflows by name or the entity they run on (contact, lead, opportunity, etc.).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "search_term": {"type": "string", "description": "Part of the workflow name to search for"},
+                "entity": {"type": "string", "description": "Optional entity filter, e.g. 'contact', 'lead'"},
+            },
+            "required": ["search_term"],
+        },
+    },
+    {
+        "name": "get_workflows_by_entity",
+        "description": "List all workflows that are triggered by a specific entity type (contact, lead, account, opportunity).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "description": "Entity name, e.g. 'contact', 'lead', 'opportunity'"},
+            },
+            "required": ["entity"],
+        },
+    },
+    {
+        "name": "retry_failed_workflow_runs",
+        "description": "Find recently failed workflow runs and retry them.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max number of failed runs to retry (default 10)"},
+            },
+        },
+    },
+    {
+        "name": "clone_workflow",
+        "description": "Clone an existing workflow under a new name. The clone is created as a Draft.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string", "description": "The GUID of the workflow to clone"},
+                "new_name": {"type": "string", "description": "Name for the cloned workflow"},
+            },
+            "required": ["workflow_id", "new_name"],
         },
     },
     {

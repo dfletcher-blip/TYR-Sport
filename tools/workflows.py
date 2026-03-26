@@ -293,3 +293,154 @@ def deactivate_workflow(workflow_id: str, reason: str = "") -> dict:
         "reason": reason,
         "message": "Workflow has been deactivated",
     }
+
+
+def search_workflows(search_term: str, entity: str = "") -> dict:
+    """
+    Search for workflows by name or the entity they run on.
+
+    search_term: part of the workflow name to search for
+    entity: optional — filter by entity type, e.g. "contact", "lead", "opportunity"
+
+    Returns matching workflows with their status.
+    """
+    filters = [f"contains(name,'{search_term}')", "category eq 0"]
+    if entity:
+        filters.append(f"primaryentity eq '{entity.lower()}'")
+
+    params = {
+        "$top": 50,
+        "$select": "workflowid,name,statecode,statuscode,primaryentity,description,modifiedon",
+        "$filter": " and ".join(filters),
+        "$orderby": "name asc",
+    }
+
+    result = crm_get("workflows", params)
+    workflows = result.get("value", [])
+
+    status_labels = {(1, 2): "Active", (0, 1): "Draft", (0, 3): "Inactive"}
+
+    return {
+        "total_found": len(workflows),
+        "workflows": [
+            {
+                "id": wf.get("workflowid"),
+                "name": wf.get("name", ""),
+                "status": status_labels.get((wf.get("statecode"), wf.get("statuscode")), "Unknown"),
+                "entity": wf.get("primaryentity", ""),
+                "description": wf.get("description", ""),
+                "last_modified": wf.get("modifiedon", ""),
+            }
+            for wf in workflows
+        ],
+    }
+
+
+def get_workflows_by_entity(entity: str) -> dict:
+    """
+    List all workflows that run on a specific entity type.
+
+    entity: "contact", "lead", "account", "opportunity", or any Dynamics entity name
+
+    Returns all workflows triggered by that entity.
+    """
+    params = {
+        "$top": 100,
+        "$select": "workflowid,name,statecode,statuscode,description,modifiedon,triggeronupdateattributelist",
+        "$filter": f"primaryentity eq '{entity.lower()}' and category eq 0",
+        "$orderby": "name asc",
+    }
+
+    result = crm_get("workflows", params)
+    workflows = result.get("value", [])
+
+    status_labels = {(1, 2): "Active", (0, 1): "Draft", (0, 3): "Inactive"}
+
+    return {
+        "entity": entity,
+        "total_found": len(workflows),
+        "active": sum(1 for wf in workflows if wf.get("statecode") == 1),
+        "workflows": [
+            {
+                "id": wf.get("workflowid"),
+                "name": wf.get("name", ""),
+                "status": status_labels.get((wf.get("statecode"), wf.get("statuscode")), "Unknown"),
+                "triggers_on_fields": wf.get("triggeronupdateattributelist", ""),
+                "description": wf.get("description", ""),
+            }
+            for wf in workflows
+        ],
+    }
+
+
+def retry_failed_workflow_runs(limit: int = 10) -> dict:
+    """
+    Find and retry recently failed workflow runs.
+
+    limit: max number of failed runs to retry (default 10)
+
+    Returns how many were retried and any errors encountered.
+    """
+    params = {
+        "$top": limit,
+        "$select": "asyncoperationid,name,statecode,statuscode,friendlymessage",
+        "$filter": "statecode eq 2 and statuscode eq 31 and operationtype eq 10",
+        "$orderby": "modifiedon desc",
+    }
+
+    failed_jobs = crm_get("asyncoperations", params).get("value", [])
+
+    if not failed_jobs:
+        return {"message": "No failed workflow runs found.", "retried": 0}
+
+    retried = []
+    errors = []
+    for job in failed_jobs:
+        job_id = job.get("asyncoperationid")
+        try:
+            crm_patch("asyncoperations", job_id, {"statecode": 0, "statuscode": 0})
+            retried.append({"id": job_id, "name": job.get("name", "")})
+        except Exception as e:
+            errors.append({"id": job_id, "name": job.get("name", ""), "error": str(e)})
+
+    return {
+        "total_failed_found": len(failed_jobs),
+        "retried": len(retried),
+        "retry_errors": len(errors),
+        "retried_jobs": retried,
+        "error_details": errors,
+        "message": f"Retried {len(retried)} of {len(failed_jobs)} failed workflow runs",
+    }
+
+
+def clone_workflow(workflow_id: str, new_name: str) -> dict:
+    """
+    Clone an existing workflow under a new name (creates a draft copy).
+
+    workflow_id: the GUID of the workflow to copy
+    new_name: name for the cloned workflow
+
+    The clone is created as a Draft and must be activated separately.
+    """
+    wf = crm_get(f"workflows({workflow_id})")
+
+    clone_data = {
+        "name": new_name,
+        "description": f"Clone of: {wf.get('name', '')}. {wf.get('description', '')}".strip(),
+        "category": wf.get("category", 0),
+        "primaryentity": wf.get("primaryentity", ""),
+        "xaml": wf.get("xaml", ""),
+        "triggeronupdateattributelist": wf.get("triggeronupdateattributelist", ""),
+        "triggeroncreate": wf.get("triggeroncreate", False),
+        "triggerondelete": wf.get("triggerondelete", False),
+    }
+
+    result = crm_post("workflows", clone_data)
+
+    return {
+        "success": True,
+        "source_workflow": wf.get("name", ""),
+        "new_workflow_name": new_name,
+        "status": "Draft — activate it when ready",
+        "message": f"Workflow cloned as '{new_name}'. It is in Draft status.",
+    }
