@@ -46,6 +46,34 @@ from tools.views_dashboards import (
     get_dashboard_details,
     reorder_dashboard_components,
 )
+from tools.opportunities import (
+    search_opportunities,
+    get_opportunity_details,
+    update_opportunity,
+    get_opportunity_summary,
+    find_stalled_opportunities,
+)
+from tools.accounts import (
+    search_accounts,
+    get_account_details,
+    update_account,
+    get_account_summary,
+    find_accounts_missing_data,
+)
+from tools.leads import (
+    search_leads,
+    get_lead_details,
+    update_lead,
+    qualify_lead,
+    get_lead_summary,
+    find_stale_leads,
+)
+from tools.teams import (
+    list_teams,
+    get_team_details,
+    search_teams,
+    get_team_summary,
+)
 
 
 # ============================================================
@@ -65,7 +93,11 @@ YOUR CAPABILITIES:
 1. CONTACTS — Search, find duplicates, fix missing data, update records
 2. WORKFLOWS — List, monitor, check health, activate/deactivate automated processes
 3. VIEWS — List existing views, create new saved views and filters
-4. DASHBOARDS — List existing dashboards, create new ones
+4. DASHBOARDS — List existing dashboards, create new ones, reorder components
+5. OPPORTUNITIES — Search deals, view pipeline, track stalled opportunities, update stages
+6. ACCOUNTS — Search companies, view account details with contacts and deals, update records
+7. LEADS — Search leads, qualify leads, find stale leads, update records
+8. TEAMS — List teams, view team members, search by name
 
 HOW YOU WORK:
 - Always start by READING data before making any changes
@@ -118,6 +150,34 @@ TOOL_REGISTRY = {
     "get_views_summary":           get_views_summary,
     "get_dashboard_details":       get_dashboard_details,
     "reorder_dashboard_components": reorder_dashboard_components,
+
+    # Opportunity tools
+    "search_opportunities":        search_opportunities,
+    "get_opportunity_details":     get_opportunity_details,
+    "update_opportunity":          update_opportunity,
+    "get_opportunity_summary":     get_opportunity_summary,
+    "find_stalled_opportunities":  find_stalled_opportunities,
+
+    # Account tools
+    "search_accounts":             search_accounts,
+    "get_account_details":         get_account_details,
+    "update_account":              update_account,
+    "get_account_summary":         get_account_summary,
+    "find_accounts_missing_data":  find_accounts_missing_data,
+
+    # Lead tools
+    "search_leads":                search_leads,
+    "get_lead_details":            get_lead_details,
+    "update_lead":                 update_lead,
+    "qualify_lead":                qualify_lead,
+    "get_lead_summary":            get_lead_summary,
+    "find_stale_leads":            find_stale_leads,
+
+    # Team tools
+    "list_teams":                  list_teams,
+    "get_team_details":            get_team_details,
+    "search_teams":                search_teams,
+    "get_team_summary":            get_team_summary,
 }
 
 
@@ -330,6 +390,192 @@ TOOL_DEFINITIONS = [
             },
             "required": ["dashboard_id", "move_to_top"],
         },
+    },
+    # ── Opportunities ──────────────────────────────────────────
+    {
+        "name": "search_opportunities",
+        "description": "Search for opportunities/deals. Filter by status: open, won, lost, or all.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "search_term": {"type": "string", "description": "Name or account name to search for"},
+                "status": {"type": "string", "enum": ["open", "won", "lost", "all"], "description": "Filter by deal status"},
+                "limit": {"type": "integer", "description": "Max results (default 50)"},
+            },
+        },
+    },
+    {
+        "name": "get_opportunity_details",
+        "description": "Get all details for a specific opportunity by ID.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"opportunity_id": {"type": "string", "description": "The opportunity GUID"}},
+            "required": ["opportunity_id"],
+        },
+    },
+    {
+        "name": "update_opportunity",
+        "description": "Update an opportunity's fields such as name, value, close probability, or estimated close date.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "opportunity_id": {"type": "string", "description": "The opportunity GUID"},
+                "updates": {"type": "object", "description": "Fields to update as key-value pairs"},
+            },
+            "required": ["opportunity_id", "updates"],
+        },
+    },
+    {
+        "name": "get_opportunity_summary",
+        "description": "Get pipeline overview: total open/won/lost counts, pipeline value, and win rate.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "find_stalled_opportunities",
+        "description": "Find open opportunities that haven't been updated recently.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"days_inactive": {"type": "integer", "description": "Days without activity (default 30)"}},
+        },
+    },
+    # ── Accounts ───────────────────────────────────────────────
+    {
+        "name": "search_accounts",
+        "description": "Search for accounts (companies) by name or city.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "search_term": {"type": "string", "description": "Company name or city to search for"},
+                "limit": {"type": "integer", "description": "Max results (default 50)"},
+            },
+        },
+    },
+    {
+        "name": "get_account_details",
+        "description": "Get full details for an account including its linked contacts and open opportunities.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"account_id": {"type": "string", "description": "The account GUID"}},
+            "required": ["account_id"],
+        },
+    },
+    {
+        "name": "update_account",
+        "description": "Update an account's fields such as phone, website, or address.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "account_id": {"type": "string", "description": "The account GUID"},
+                "updates": {"type": "object", "description": "Fields to update as key-value pairs"},
+            },
+            "required": ["account_id", "updates"],
+        },
+    },
+    {
+        "name": "get_account_summary",
+        "description": "Get a summary of all accounts: total count, active/inactive, top states.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "find_accounts_missing_data",
+        "description": "Find active accounts missing email, phone, website, or address.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "field": {"type": "string", "enum": ["email", "phone", "website", "address"], "description": "Which field to check"},
+            },
+            "required": ["field"],
+        },
+    },
+    # ── Leads ──────────────────────────────────────────────────
+    {
+        "name": "search_leads",
+        "description": "Search for leads by name, email, or company. Filter by status: open, qualified, disqualified, or all.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "search_term": {"type": "string", "description": "Name, email, or company to search for"},
+                "status": {"type": "string", "enum": ["open", "qualified", "disqualified", "all"], "description": "Filter by lead status"},
+                "limit": {"type": "integer", "description": "Max results (default 50)"},
+            },
+        },
+    },
+    {
+        "name": "get_lead_details",
+        "description": "Get all details for a specific lead by ID.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"lead_id": {"type": "string", "description": "The lead GUID"}},
+            "required": ["lead_id"],
+        },
+    },
+    {
+        "name": "update_lead",
+        "description": "Update a lead's fields such as email, phone, company, or notes.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_id": {"type": "string", "description": "The lead GUID"},
+                "updates": {"type": "object", "description": "Fields to update as key-value pairs"},
+            },
+            "required": ["lead_id", "updates"],
+        },
+    },
+    {
+        "name": "qualify_lead",
+        "description": "Qualify a lead — marks it as qualified and creates a contact, account, and opportunity.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"lead_id": {"type": "string", "description": "The lead GUID to qualify"}},
+            "required": ["lead_id"],
+        },
+    },
+    {
+        "name": "get_lead_summary",
+        "description": "Get a summary of all leads: counts by status and top lead sources.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "find_stale_leads",
+        "description": "Find open leads that haven't been updated recently.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"days_inactive": {"type": "integer", "description": "Days without activity (default 14)"}},
+        },
+    },
+    # ── Teams ──────────────────────────────────────────────────
+    {
+        "name": "list_teams",
+        "description": "List all teams in the CRM. Filter by type: owner, access, or all.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "team_type": {"type": "string", "enum": ["owner", "access", "all"], "description": "Filter by team type"},
+            },
+        },
+    },
+    {
+        "name": "get_team_details",
+        "description": "Get full details for a team including its members.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"team_id": {"type": "string", "description": "The team GUID"}},
+            "required": ["team_id"],
+        },
+    },
+    {
+        "name": "search_teams",
+        "description": "Search for teams by name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"search_term": {"type": "string", "description": "Part of the team name to search for"}},
+            "required": ["search_term"],
+        },
+    },
+    {
+        "name": "get_team_summary",
+        "description": "Get a summary of all teams: counts by type and business unit.",
+        "input_schema": {"type": "object", "properties": {}},
     },
 ]
 
