@@ -109,6 +109,13 @@ from tools.special_terms import (
     get_str_workflows,
     update_special_terms,
 )
+from tools.form_customization import (
+    get_entity_form,
+    list_entity_fields,
+    get_optionset_values,
+    add_fields_to_form,
+    create_custom_field,
+)
 
 
 # ============================================================
@@ -137,6 +144,7 @@ YOUR CAPABILITIES:
 10. REPORTS — Data quality, pipeline, lead source, and activity reports
 11. EMAIL — Send emails to contacts or leads, send bulk emails, view email history
 12. SPECIAL TERMS (STR) — Search STR records, check pending approvals, find expiring agreements, view by account, manage approval workflows
+13. FORM CUSTOMIZATION — Add fields to entity forms, create custom fields (including dropdowns), inspect form layouts, publish changes
 
 HOW YOU WORK:
 - Always start by READING data before making any changes
@@ -225,6 +233,13 @@ TOOL_REGISTRY = {
     "get_special_terms_summary":      get_special_terms_summary,
     "get_str_workflows":              get_str_workflows,
     "update_special_terms":           update_special_terms,
+
+    # Form customization tools
+    "get_entity_form":                get_entity_form,
+    "list_entity_fields":             list_entity_fields,
+    "get_optionset_values":           get_optionset_values,
+    "add_fields_to_form":             add_fields_to_form,
+    "create_custom_field":            create_custom_field,
 
     # Team tools
     "list_teams":                  list_teams,
@@ -739,6 +754,73 @@ TOOL_DEFINITIONS = [
                 "updates": {"type": "object", "description": "Fields to update as key-value pairs"},
             },
             "required": ["str_id", "updates"],
+        },
+    },
+    # ── Form Customization ─────────────────────────────────────
+    {
+        "name": "get_entity_form",
+        "description": "Fetch the current main form definition for an entity and list all fields currently on it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "description": "Entity name, e.g. 'opportunity', 'contact', 'lead'"},
+            },
+            "required": ["entity"],
+        },
+    },
+    {
+        "name": "list_entity_fields",
+        "description": "List all available fields on an entity. Use this to find exact field logical names before adding them to a form.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "description": "Entity name, e.g. 'opportunity'"},
+                "search_term": {"type": "string", "description": "Optional filter by field name or label"},
+            },
+            "required": ["entity"],
+        },
+    },
+    {
+        "name": "get_optionset_values",
+        "description": "Get all dropdown options for an option set field on an entity. Use this to see existing values before creating a new field.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "description": "Entity name, e.g. 'opportunity'"},
+                "field_name": {"type": "string", "description": "Logical field name, e.g. 'tyr_tyrtype'"},
+            },
+            "required": ["entity", "field_name"],
+        },
+    },
+    {
+        "name": "add_fields_to_form",
+        "description": "Add one or more fields to an entity's main form. Use get_entity_form first to see what's already there, and list_entity_fields to confirm field names. Publishes automatically.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "description": "Entity name, e.g. 'opportunity'"},
+                "fields": {
+                    "type": "array",
+                    "description": "List of field logical names to add, e.g. ['ownerid','estimatedclosedate']. For subgrids use objects: {type:'subgrid', name:'Contacts', entity:'contact', relationship:'...'}",
+                    "items": {},
+                },
+                "section_label": {"type": "string", "description": "Section heading to add fields under (default 'Details')"},
+            },
+            "required": ["entity", "fields"],
+        },
+    },
+    {
+        "name": "create_custom_field",
+        "description": "Create a new custom field on an entity. For option sets, provide a list of dropdown options. Returns the logical name to use with add_fields_to_form.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "description": "Entity name, e.g. 'opportunity'"},
+                "display_name": {"type": "string", "description": "Human-readable label, e.g. 'TYR Type'"},
+                "field_type": {"type": "string", "enum": ["text", "date", "optionset", "boolean", "number", "currency"], "description": "Field data type"},
+                "options": {"type": "array", "items": {"type": "string"}, "description": "For optionset only — list of dropdown option labels"},
+            },
+            "required": ["entity", "display_name", "field_type"],
         },
     },
     # ── Teams ──────────────────────────────────────────────────
