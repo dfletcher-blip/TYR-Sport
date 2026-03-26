@@ -99,6 +99,16 @@ from tools.teams import (
     search_teams,
     get_team_summary,
 )
+from tools.special_terms import (
+    search_special_terms,
+    get_special_terms_details,
+    get_pending_approvals,
+    get_special_terms_by_account,
+    get_expiring_special_terms,
+    get_special_terms_summary,
+    get_str_workflows,
+    update_special_terms,
+)
 
 
 # ============================================================
@@ -126,6 +136,7 @@ YOUR CAPABILITIES:
 9. BULK UPDATES — Update many contacts, leads, accounts, or opportunities at once by filter
 10. REPORTS — Data quality, pipeline, lead source, and activity reports
 11. EMAIL — Send emails to contacts or leads, send bulk emails, view email history
+12. SPECIAL TERMS (STR) — Search STR records, check pending approvals, find expiring agreements, view by account, manage approval workflows
 
 HOW YOU WORK:
 - Always start by READING data before making any changes
@@ -204,6 +215,16 @@ TOOL_REGISTRY = {
     "qualify_lead":                qualify_lead,
     "get_lead_summary":            get_lead_summary,
     "find_stale_leads":            find_stale_leads,
+
+    # Special Terms (STR) tools
+    "search_special_terms":           search_special_terms,
+    "get_special_terms_details":      get_special_terms_details,
+    "get_pending_approvals":          get_pending_approvals,
+    "get_special_terms_by_account":   get_special_terms_by_account,
+    "get_expiring_special_terms":     get_expiring_special_terms,
+    "get_special_terms_summary":      get_special_terms_summary,
+    "get_str_workflows":              get_str_workflows,
+    "update_special_terms":           update_special_terms,
 
     # Team tools
     "list_teams":                  list_teams,
@@ -641,6 +662,83 @@ TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {"days_inactive": {"type": "integer", "description": "Days without activity (default 14)"}},
+        },
+    },
+    # ── Special Terms (STR) ────────────────────────────────────
+    {
+        "name": "search_special_terms",
+        "description": "Search Special Terms (STR) records by title, record number, or account name. Filter by approval status: submitted, approved, rejected, draft, or all.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "search_term": {"type": "string", "description": "STR number (ST-...), title, or account name"},
+                "status": {"type": "string", "enum": ["all", "submitted", "approved", "rejected", "draft"], "description": "Filter by approval status"},
+                "limit": {"type": "integer", "description": "Max results (default 50)"},
+            },
+        },
+    },
+    {
+        "name": "get_special_terms_details",
+        "description": "Get full details for a specific STR record including approval status, dates, request type, and all fields.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "str_id": {"type": "string", "description": "The GUID of the Special Terms record"},
+            },
+            "required": ["str_id"],
+        },
+    },
+    {
+        "name": "get_pending_approvals",
+        "description": "Find all STR records currently awaiting approval (submitted but not yet approved or rejected).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "approver_role": {"type": "string", "enum": ["all", "sales", "finance"], "description": "Filter by which approval level is pending"},
+            },
+        },
+    },
+    {
+        "name": "get_special_terms_by_account",
+        "description": "Get all STR records linked to a specific account by account name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "account_name": {"type": "string", "description": "Full or partial account name, e.g. 'South Bay Aquatic'"},
+            },
+            "required": ["account_name"],
+        },
+    },
+    {
+        "name": "get_expiring_special_terms",
+        "description": "Find STR records expiring within a given number of days.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "description": "How many days ahead to look (default 30)"},
+            },
+        },
+    },
+    {
+        "name": "get_special_terms_summary",
+        "description": "Get a high-level summary of all STR records: counts by approval status and request type.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_str_workflows",
+        "description": "Find all workflows related to the Special Terms approval process — both by entity and by name keyword (approval, STR, special terms).",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "update_special_terms",
+        "description": "Update fields on a Special Terms record such as expiration date, title, or request type.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "str_id": {"type": "string", "description": "The GUID of the STR record"},
+                "updates": {"type": "object", "description": "Fields to update as key-value pairs"},
+            },
+            "required": ["str_id", "updates"],
         },
     },
     # ── Teams ──────────────────────────────────────────────────
