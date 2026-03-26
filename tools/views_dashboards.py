@@ -173,7 +173,7 @@ def list_dashboards() -> dict:
     """
     params = {
         "$top": 100,
-        "$select": "formid,name,description,formactivationstate,createdon,modifiedon",
+        "$select": "formid,name,description,formactivationstate",
         "$filter": "type eq 0",  # 0 = Dashboard form type
         "$orderby": "name asc",
     }
@@ -188,8 +188,6 @@ def list_dashboards() -> dict:
             "name": d.get("name", "Unnamed Dashboard"),
             "description": d.get("description", ""),
             "status": "Active" if d.get("formactivationstate") == 1 else "Inactive",
-            "created": d.get("createdon", ""),
-            "last_modified": d.get("modifiedon", ""),
         })
 
     return {
@@ -259,7 +257,7 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
         "type": 0,  # Dashboard
         "formactivationstate": 1,
         "formxml": form_xml,
-        "objecttypecode": 0,  # Global dashboard (not entity-specific)
+        "objecttypecode": "none",  # Global dashboard (not entity-specific)
     }
 
     result = crm_post("systemforms", dashboard_data)

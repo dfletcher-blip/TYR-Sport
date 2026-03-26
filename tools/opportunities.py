@@ -25,8 +25,8 @@ def search_opportunities(search_term: str = "", status: str = "open", limit: int
 
     params = {
         "$top": limit,
-        "$select": "opportunityid,name,estimatedvalue,closeprobability,estimatedclosedate,statecode,statuscode,createdon,modifiedon",
-        "$expand": "customerid_account($select=name),ownerid($select=fullname)",
+        "$select": "opportunityid,name,estimatedvalue,closeprobability,estimatedclosedate,statecode,statuscode,createdon,modifiedon,_ownerid_value",
+        "$expand": "customerid_account($select=name)",
         "$orderby": "modifiedon desc",
     }
 
@@ -55,7 +55,7 @@ def search_opportunities(search_term: str = "", status: str = "open", limit: int
                 "estimated_close": o.get("estimatedclosedate", ""),
                 "status": status_labels.get(o.get("statecode"), "Unknown"),
                 "account": (o.get("customerid_account") or {}).get("name", ""),
-                "owner": (o.get("ownerid") or {}).get("fullname", ""),
+                "owner": o.get("_ownerid_value@OData.Community.Display.V1.FormattedValue", ""),
                 "last_modified": o.get("modifiedon", ""),
             }
             for o in opps
@@ -70,7 +70,7 @@ def get_opportunity_details(opportunity_id: str) -> dict:
     opportunity_id: the unique ID of the opportunity
     """
     params = {
-        "$expand": "customerid_account($select=name),ownerid($select=fullname)",
+        "$expand": "customerid_account($select=name)",
     }
     o = crm_get(f"opportunities({opportunity_id})", params)
 
@@ -156,10 +156,9 @@ def find_stalled_opportunities(days_inactive: int = 30) -> dict:
 
     params = {
         "$top": 100,
-        "$select": "opportunityid,name,estimatedvalue,estimatedclosedate,modifiedon",
+        "$select": "opportunityid,name,estimatedvalue,estimatedclosedate,modifiedon,_ownerid_value",
         "$filter": f"statecode eq 0 and modifiedon le {cutoff}",
         "$orderby": "modifiedon asc",
-        "$expand": "ownerid($select=fullname)",
     }
 
     result = crm_get("opportunities", params)
@@ -176,7 +175,7 @@ def find_stalled_opportunities(days_inactive: int = 30) -> dict:
                 "value": o.get("estimatedvalue"),
                 "estimated_close": o.get("estimatedclosedate", ""),
                 "last_modified": o.get("modifiedon", ""),
-                "owner": (o.get("ownerid") or {}).get("fullname", ""),
+                "owner": o.get("_ownerid_value@OData.Community.Display.V1.FormattedValue", ""),
             }
             for o in opps
         ],

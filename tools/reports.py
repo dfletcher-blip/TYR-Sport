@@ -114,7 +114,7 @@ def get_pipeline_report() -> dict:
     """
     params = {
         "$select": "opportunityid,name,estimatedvalue,closeprobability,statecode,estimatedclosedate",
-        "$expand": "ownerid($select=fullname)",
+        "$select": "opportunityid,name,estimatedvalue,closeprobability,statecode,estimatedclosedate,_ownerid_value",
         "$filter": "statecode eq 0",
         "$top": 500,
     }
@@ -126,7 +126,7 @@ def get_pipeline_report() -> dict:
     # By owner
     owner_map: dict = {}
     for o in opps:
-        owner = (o.get("ownerid") or {}).get("fullname", "Unassigned")
+        owner = o.get("_ownerid_value@OData.Community.Display.V1.FormattedValue") or "Unassigned"
         if owner not in owner_map:
             owner_map[owner] = {"count": 0, "value": 0}
         owner_map[owner]["count"] += 1
