@@ -45,6 +45,27 @@ from tools.views_dashboards import (
     get_views_summary,
     get_dashboard_details,
     reorder_dashboard_components,
+    clone_dashboard,
+    set_dashboard_description,
+)
+from tools.bulk_updates import (
+    bulk_update_contacts,
+    bulk_update_leads,
+    bulk_update_accounts,
+    bulk_update_opportunities,
+)
+from tools.reports import (
+    list_reports,
+    get_data_quality_report,
+    get_pipeline_report,
+    get_lead_source_report,
+    get_activity_report,
+)
+from tools.email import (
+    send_email_to_contact,
+    send_email_to_lead,
+    send_bulk_email,
+    get_email_history,
 )
 from tools.opportunities import (
     search_opportunities,
@@ -93,11 +114,14 @@ YOUR CAPABILITIES:
 1. CONTACTS — Search, find duplicates, fix missing data, update records
 2. WORKFLOWS — List, monitor, check health, activate/deactivate automated processes
 3. VIEWS — List existing views, create new saved views and filters
-4. DASHBOARDS — List existing dashboards, create new ones, reorder components
+4. DASHBOARDS — List, create, reorder, clone, and update dashboards
 5. OPPORTUNITIES — Search deals, view pipeline, track stalled opportunities, update stages
 6. ACCOUNTS — Search companies, view account details with contacts and deals, update records
 7. LEADS — Search leads, qualify leads, find stale leads, update records
 8. TEAMS — List teams, view team members, search by name
+9. BULK UPDATES — Update many contacts, leads, accounts, or opportunities at once by filter
+10. REPORTS — Data quality, pipeline, lead source, and activity reports
+11. EMAIL — Send emails to contacts or leads, send bulk emails, view email history
 
 HOW YOU WORK:
 - Always start by READING data before making any changes
@@ -178,6 +202,29 @@ TOOL_REGISTRY = {
     "get_team_details":            get_team_details,
     "search_teams":                search_teams,
     "get_team_summary":            get_team_summary,
+
+    # Dashboard extras
+    "clone_dashboard":             clone_dashboard,
+    "set_dashboard_description":   set_dashboard_description,
+
+    # Bulk update tools
+    "bulk_update_contacts":        bulk_update_contacts,
+    "bulk_update_leads":           bulk_update_leads,
+    "bulk_update_accounts":        bulk_update_accounts,
+    "bulk_update_opportunities":   bulk_update_opportunities,
+
+    # Report tools
+    "list_reports":                list_reports,
+    "get_data_quality_report":     get_data_quality_report,
+    "get_pipeline_report":         get_pipeline_report,
+    "get_lead_source_report":      get_lead_source_report,
+    "get_activity_report":         get_activity_report,
+
+    # Email tools
+    "send_email_to_contact":       send_email_to_contact,
+    "send_email_to_lead":          send_email_to_lead,
+    "send_bulk_email":             send_bulk_email,
+    "get_email_history":           get_email_history,
 }
 
 
@@ -576,6 +623,175 @@ TOOL_DEFINITIONS = [
         "name": "get_team_summary",
         "description": "Get a summary of all teams: counts by type and business unit.",
         "input_schema": {"type": "object", "properties": {}},
+    },
+    # ── Dashboard extras ───────────────────────────────────────
+    {
+        "name": "clone_dashboard",
+        "description": "Clone an existing dashboard under a new name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source_name_or_id": {"type": "string", "description": "Name or GUID of the dashboard to copy"},
+                "new_name": {"type": "string", "description": "Name for the cloned dashboard"},
+                "new_description": {"type": "string", "description": "Optional description for the clone"},
+            },
+            "required": ["source_name_or_id", "new_name"],
+        },
+    },
+    {
+        "name": "set_dashboard_description",
+        "description": "Update the description of an existing dashboard.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name_or_id": {"type": "string", "description": "Name or GUID of the dashboard"},
+                "description": {"type": "string", "description": "New description text"},
+            },
+            "required": ["name_or_id", "description"],
+        },
+    },
+    # ── Bulk updates ───────────────────────────────────────────
+    {
+        "name": "bulk_update_contacts",
+        "description": "Update multiple contacts at once that match a filter. Use preview_only=True first to confirm which records will be affected.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filter_criteria": {"type": "string", "description": "OData filter to select records, e.g. 'statecode eq 0 and emailaddress1 eq null'"},
+                "updates": {"type": "object", "description": "Fields to set on every matched record"},
+                "preview_only": {"type": "boolean", "description": "If true, show matches without updating (default false)"},
+            },
+            "required": ["filter_criteria", "updates"],
+        },
+    },
+    {
+        "name": "bulk_update_leads",
+        "description": "Update multiple leads at once that match a filter. Use preview_only=True first to confirm scope.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filter_criteria": {"type": "string", "description": "OData filter to select leads"},
+                "updates": {"type": "object", "description": "Fields to set on every matched lead"},
+                "preview_only": {"type": "boolean", "description": "If true, show matches without updating"},
+            },
+            "required": ["filter_criteria", "updates"],
+        },
+    },
+    {
+        "name": "bulk_update_accounts",
+        "description": "Update multiple accounts at once that match a filter. Use preview_only=True first to confirm scope.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filter_criteria": {"type": "string", "description": "OData filter to select accounts"},
+                "updates": {"type": "object", "description": "Fields to set on every matched account"},
+                "preview_only": {"type": "boolean", "description": "If true, show matches without updating"},
+            },
+            "required": ["filter_criteria", "updates"],
+        },
+    },
+    {
+        "name": "bulk_update_opportunities",
+        "description": "Update multiple opportunities at once that match a filter. Use preview_only=True first to confirm scope.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filter_criteria": {"type": "string", "description": "OData filter to select opportunities"},
+                "updates": {"type": "object", "description": "Fields to set on every matched opportunity"},
+                "preview_only": {"type": "boolean", "description": "If true, show matches without updating"},
+            },
+            "required": ["filter_criteria", "updates"],
+        },
+    },
+    # ── Reports ────────────────────────────────────────────────
+    {
+        "name": "list_reports",
+        "description": "List reports stored in the CRM. Filter by category: account, contact, lead, opportunity, custom, or all.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "enum": ["all", "account", "contact", "lead", "opportunity", "custom"], "description": "Report category filter"},
+            },
+        },
+    },
+    {
+        "name": "get_data_quality_report",
+        "description": "Generate a live data quality report across contacts, leads, and accounts showing missing fields and completeness percentages.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_pipeline_report",
+        "description": "Generate a live pipeline report: total value, weighted value, breakdown by owner and probability.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_lead_source_report",
+        "description": "Report showing lead volume and conversion rates broken down by lead source.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_activity_report",
+        "description": "Show recent CRM activity counts (emails, calls, tasks) for a given number of days.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "description": "How many days back to look (default 30)"},
+            },
+        },
+    },
+    # ── Email ──────────────────────────────────────────────────
+    {
+        "name": "send_email_to_contact",
+        "description": "Send an email to a single contact and log it as a CRM activity.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string", "description": "The contact GUID"},
+                "subject": {"type": "string", "description": "Email subject line"},
+                "body": {"type": "string", "description": "Email body text"},
+            },
+            "required": ["contact_id", "subject", "body"],
+        },
+    },
+    {
+        "name": "send_email_to_lead",
+        "description": "Send an email to a single lead and log it as a CRM activity.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_id": {"type": "string", "description": "The lead GUID"},
+                "subject": {"type": "string", "description": "Email subject line"},
+                "body": {"type": "string", "description": "Email body text"},
+            },
+            "required": ["lead_id", "subject", "body"],
+        },
+    },
+    {
+        "name": "send_bulk_email",
+        "description": "Send the same email to multiple contacts or leads matching a filter. Always use preview_only=True first to confirm recipients.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "enum": ["contact", "lead"], "description": "Whether to email contacts or leads"},
+                "filter_criteria": {"type": "string", "description": "OData filter to select recipients"},
+                "subject": {"type": "string", "description": "Email subject"},
+                "body": {"type": "string", "description": "Email body text"},
+                "preview_only": {"type": "boolean", "description": "If true, show recipient list without sending"},
+            },
+            "required": ["entity", "filter_criteria", "subject", "body"],
+        },
+    },
+    {
+        "name": "get_email_history",
+        "description": "Get the email activity history for a contact or lead.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string", "description": "Contact GUID (provide this or lead_id)"},
+                "lead_id": {"type": "string", "description": "Lead GUID (provide this or contact_id)"},
+                "limit": {"type": "integer", "description": "Max emails to return (default 20)"},
+            },
+        },
     },
 ]
 

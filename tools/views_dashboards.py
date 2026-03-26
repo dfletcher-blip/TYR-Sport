@@ -531,3 +531,59 @@ def get_views_summary() -> dict:
         "views_by_entity": summary,
         "message": "Summary of views across all main entities",
     }
+
+
+def clone_dashboard(source_name_or_id: str, new_name: str, new_description: str = "") -> dict:
+    """
+    Clone an existing dashboard under a new name.
+
+    source_name_or_id: name or GUID of the dashboard to copy
+    new_name: name for the cloned dashboard
+    new_description: optional description for the clone
+    """
+    details = get_dashboard_details(source_name_or_id)
+    if "error" in details:
+        return details
+
+    formxml = details.get("formxml", "")
+    if not formxml:
+        return {"error": "Source dashboard has no formxml to clone"}
+
+    dashboard_data = {
+        "name": new_name,
+        "description": new_description or f"Clone of {details['name']}",
+        "type": 0,
+        "formactivationstate": 1,
+        "formxml": formxml,
+        "objecttypecode": 0,
+    }
+
+    result = crm_post("systemforms", dashboard_data)
+    return {
+        "success": True,
+        "source_dashboard": details["name"],
+        "new_dashboard_name": new_name,
+        "message": f"Dashboard '{details['name']}' cloned as '{new_name}'",
+    }
+
+
+def set_dashboard_description(name_or_id: str, description: str) -> dict:
+    """
+    Update the description of an existing dashboard.
+
+    name_or_id: name or GUID of the dashboard
+    description: new description text
+    """
+    details = get_dashboard_details(name_or_id)
+    if "error" in details:
+        return details
+
+    endpoint = "systemforms" if details["form_type"] == "system" else "userforms"
+    crm_patch(endpoint, details["id"], {"description": description})
+
+    return {
+        "success": True,
+        "dashboard_name": details["name"],
+        "new_description": description,
+        "message": f"Description updated on '{details['name']}'",
+    }
