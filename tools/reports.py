@@ -113,7 +113,6 @@ def get_pipeline_report() -> dict:
     Generate a live pipeline report showing opportunities by stage, owner, and value.
     """
     params = {
-        "$select": "opportunityid,name,estimatedvalue,closeprobability,statecode,estimatedclosedate",
         "$select": "opportunityid,name,estimatedvalue,closeprobability,statecode,estimatedclosedate,_ownerid_value",
         "$filter": "statecode eq 0",
         "$top": 500,

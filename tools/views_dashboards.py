@@ -226,9 +226,9 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
         col = i % 2
         if col == 0:
             rows_xml += "<row>"
-        rows_xml += f"""<cell colspan="1" rowspan="1" showlabel="true" locklevel="0">
+        rows_xml += f"""<cell showlabel="true" locklevel="0">
   <labels><label description="{comp.get('title', 'Component')}" languagecode="1033"/></labels>
-  <control id="control{i}" classid="{{E7A81278-8635-4d9e-8D4D-59480B391C5B}}" isrequired="false" rowspan="1" colspan="1"/>
+  <control id="control{i}" classid="{{E7A81278-8635-4d9e-8D4D-59480B391C5B}}" isrequired="false"/>
 </cell>"""
         if col == 1 or i == len(components) - 1:
             rows_xml += "</row>"
