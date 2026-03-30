@@ -8,6 +8,8 @@
 # ============================================================
 
 import sys, os, json, html
+from dotenv import load_dotenv
+load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from config.crm_connection import crm_get, crm_post, crm_patch, crm_action
@@ -196,11 +198,24 @@ def list_dashboards() -> dict:
     }
 
 
+def _get_user_id(email: str) -> str:
+    """Look up a Dynamics user's systemuserid by email address."""
+    result = crm_get("systemusers", {
+        "$filter": f"internalemailaddress eq '{email}' or domainname eq '{email}'",
+        "$select": "systemuserid,fullname",
+        "$top": 1,
+    })
+    users = result.get("value", [])
+    if not users:
+        raise RuntimeError(f"Could not find Dynamics user with email: {email}")
+    return users[0]["systemuserid"]
+
+
 def create_dashboard(name: str, description: str, components: list = None) -> dict:
     """
-    Create a new dashboard in the CRM.
+    Create a new personal dashboard in the CRM, visible immediately in My Dashboards.
 
-    name: display name, e.g. "Contact Data Quality Dashboard"
+    name: display name, e.g. "Opportunity Pipeline Dashboard"
     description: what this dashboard shows
     components: list of components to include. Each item is a dict:
         {
@@ -208,22 +223,29 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
             "title": "Component Title",
             "entity": "contact" or "lead" etc.
         }
-        Defaults to a standard contact overview dashboard.
 
     Returns confirmation and the dashboard ID.
     """
     if components is None:
         components = [
-            {"type": "list",  "title": "Recent Contacts",         "entity": "contact"},
-            {"type": "chart", "title": "Contacts by Status",       "entity": "contact"},
-            {"type": "list",  "title": "Contacts Missing Email",   "entity": "contact"},
+            {"type": "list",  "title": "Recent Contacts",       "entity": "contact"},
+            {"type": "chart", "title": "Contacts by Status",     "entity": "contact"},
+            {"type": "list",  "title": "Contacts Missing Email", "entity": "contact"},
         ]
 
-    # Build a simple dashboard form XML
-    # This creates a 2-column layout
+    # Look up the dashboard owner from .env
+    user_email = os.getenv("DYNAMICS_USER_EMAIL", "")
+    owner_id = None
+    if user_email:
+        try:
+            owner_id = _get_user_id(user_email)
+        except Exception:
+            owner_id = None
+
+    # Build form XML
     safe_name = html.escape(name)
     rows_xml = ""
-    for i, comp in enumerate(components[:4]):  # max 4 components
+    for i, comp in enumerate(components[:6]):
         col = i % 2
         if col == 0:
             rows_xml += "<row>"
@@ -256,35 +278,27 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
     dashboard_data = {
         "name": name,
         "description": description,
-        "type": 0,  # Dashboard
-        "formactivationstate": 1,
+        "type": 0,
         "formxml": form_xml,
-        "objecttypecode": "none",  # Global dashboard (not entity-specific)
+        "objecttypecode": "none",
     }
 
+    if owner_id:
+        dashboard_data["ownerid@odata.bind"] = f"/systemusers({owner_id})"
+
+    # Create as personal dashboard (userform) — always visible in My Dashboards
     try:
-        result = crm_post("systemforms", dashboard_data)
+        crm_post("userforms", dashboard_data)
     except RuntimeError as e:
         return {"success": False, "error": str(e)}
 
-    dashboard_id = result.get("formid", "") if isinstance(result, dict) else ""
-
-    # Publish so the dashboard is visible immediately
-    try:
-        crm_action("PublishAllXml", {})
-        published = True
-    except Exception:
-        published = False
-
     return {
         "success": True,
-        "dashboard_id": dashboard_id,
         "dashboard_name": name,
         "description": description,
         "components_added": len(components),
-        "published": published,
-        "message": f"Dashboard '{name}' has been created and {'published' if published else 'saved (may need manual publish)'}",
-        "note": "Open your CRM and navigate to Dashboards to see it",
+        "owner": user_email or "service account",
+        "message": f"Dashboard '{name}' created successfully. Refresh your CRM and look under My Dashboards.",
     }
 
 
