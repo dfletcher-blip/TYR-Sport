@@ -41,6 +41,7 @@ from tools.workflows import (
     retry_failed_workflow_runs,
     clone_workflow,
 )
+from tools.memory import update_crm_memory, read_crm_memory
 from tools.views_dashboards import (
     list_views,
     create_contact_view,
@@ -136,7 +137,7 @@ YOUR CAPABILITIES:
 1. CONTACTS — Search, find duplicates, fix missing data, update records
 2. WORKFLOWS — List, monitor, check health, activate/deactivate automated processes
 3. VIEWS — List existing views, create new saved views and filters
-4. DASHBOARDS — List, create, reorder, clone, and update dashboards
+4. DASHBOARDS — List, create, reorder, clone, and update dashboards (created as personal dashboards visible in My Dashboards)
 5. OPPORTUNITIES — Search deals, view pipeline, track stalled opportunities, update stages
 6. ACCOUNTS — Search companies, view account details with contacts and deals, update records
 7. LEADS — Search leads, qualify leads, find stale leads, update records
@@ -146,6 +147,7 @@ YOUR CAPABILITIES:
 11. EMAIL — Send emails to contacts or leads, send bulk emails, view email history
 12. SPECIAL TERMS (STR) — Search STR records, check pending approvals, find expiring agreements, view by account, manage approval workflows
 13. FORM CUSTOMIZATION — Add fields to entity forms, create custom fields (including dropdowns), inspect form layouts, publish changes
+14. MEMORY — Read and update persistent CRM memory to remember field names, entity names, and CRM-specific facts across sessions
 
 HOW YOU WORK:
 - Always start by READING data before making any changes
@@ -175,6 +177,8 @@ COMMUNICATION STYLE:
 
 TOOL_REGISTRY = {
     # Contact tools
+    "update_crm_memory":           update_crm_memory,
+    "read_crm_memory":             read_crm_memory,
     "search_contacts":             search_contacts,
     "find_contacts_missing_data":  find_contacts_missing_data,
     "find_duplicate_contacts":     find_duplicate_contacts,
@@ -280,6 +284,24 @@ TOOL_REGISTRY = {
 # Claude reads these to know what parameters each tool takes.
 
 TOOL_DEFINITIONS = [
+    {
+        "name": "update_crm_memory",
+        "description": "Save something you learned about this CRM to persistent memory so you remember it next session. Use this when you discover field names, entity names, user IDs, or other CRM-specific facts.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "section": {"type": "string", "description": "Memory section (e.g. 'key_fields', 'agent_notes', 'known_views')"},
+                "key":     {"type": "string", "description": "Key name within the section"},
+                "value":   {"description": "Value to store (string, number, list, or object)"},
+            },
+            "required": ["section", "key", "value"],
+        },
+    },
+    {
+        "name": "read_crm_memory",
+        "description": "Read the full persistent CRM memory to see what is already known about this CRM.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
     {
         "name": "search_contacts",
         "description": "Search for contacts in the CRM by name, email, or company. Leave search_term blank to get all contacts.",
@@ -1048,8 +1070,19 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
     """
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
+    # Load persistent CRM memory if available
+    memory_context = ""
+    memory_path = os.path.join(os.path.dirname(__file__), "crm_memory.json")
+    if os.path.exists(memory_path):
+        try:
+            with open(memory_path, "r") as f:
+                memory = json.load(f)
+            memory_context = f"\n\nCRM MEMORY (persistent knowledge about this specific CRM):\n{json.dumps(memory, indent=2)}"
+        except Exception:
+            pass
+
     # Add dry_run instruction if needed
-    system = SYSTEM_PROMPT
+    system = SYSTEM_PROMPT + memory_context
     if dry_run:
         system += (
             "\n\nDRY RUN MODE: You may READ data freely, but do NOT call any tools "

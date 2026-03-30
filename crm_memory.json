@@ -1,0 +1,65 @@
+{
+  "_description": "Persistent memory for the TYR Sport CRM Agent. Edit this file to update what the agent knows about your CRM. The agent reads this at the start of every session.",
+
+  "organization": {
+    "name": "TYR Sport",
+    "dynamics_url": "https://tyr.crm.dynamics.com",
+    "primary_user": "Dillon Fletcher",
+    "primary_user_email": "dfletcher@TYRsportoffice.onmicrosoft.com"
+  },
+
+  "key_fields": {
+    "opportunity": {
+      "stage": "tyr_stage",
+      "products": "tyr_products",
+      "next_step_date": "tyr_nextstepdate",
+      "next_step": "stepname",
+      "amount": "estimatedvalue",
+      "close_date": "estimatedclosedate",
+      "owner": "_ownerid_value"
+    },
+    "special_terms": {
+      "notes": "Discover the correct entity API name at runtime using auto-discovery (tries tyr_specialterms, cr_specialterms, etc.)"
+    }
+  },
+
+  "dashboards": {
+    "notes": "Dashboards are created as personal userforms owned by primary_user_email. They appear under My Dashboards in the CRM immediately after creation.",
+    "existing_system_dashboards": [
+      "Approvals and Tasks",
+      "D2C/Crossfit Overview",
+      "East Coast Sports Promo Rep Dashboard",
+      "EU Overview",
+      "EUR Overview",
+      "Executive Dashboard",
+      "Power Bi Dashboard",
+      "Run_Sport Specialty Dashboard",
+      "TMG Director Dashboard"
+    ],
+    "created_by_agent": [
+      "Opportunities Dashboard",
+      "Opportunity Pipeline - By Owner & By Stage",
+      "Opportunity Pipeline Dashboard"
+    ]
+  },
+
+  "known_views": {
+    "opportunity": [
+      "Open Opportunities",
+      "My Open Opportunities",
+      "Opportunities Closing Next Month",
+      "Opportunities Forecast View",
+      "Opportunities in Current Fiscal Year",
+      "Deals at Risk (AI Agent)",
+      "All Opportunities"
+    ]
+  },
+
+  "agent_notes": [
+    "System dashboards created via API are NOT visible in the UCI app without manual app membership configuration — always use create_dashboard which creates personal userforms instead.",
+    "PublishAllXml succeeds but does NOT make system dashboards visible in the app — do not mislead the user about this.",
+    "The opportunity owner is retrieved via _ownerid_value field, not $expand ownerid.",
+    "tyr_stage is the custom stage field for opportunities.",
+    "The user is on Anthropic Tier 1/2 — avoid making excessive tool calls in a single request to prevent 429 rate limit errors."
+  ]
+}
