@@ -7,7 +7,7 @@
 # These tools let Claude create, list, and manage both.
 # ============================================================
 
-import sys, os, json
+import sys, os, json, html
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from config.crm_connection import crm_get, crm_post, crm_patch, crm_action
@@ -221,13 +221,15 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
 
     # Build a simple dashboard form XML
     # This creates a 2-column layout
+    safe_name = html.escape(name)
     rows_xml = ""
     for i, comp in enumerate(components[:4]):  # max 4 components
         col = i % 2
         if col == 0:
             rows_xml += "<row>"
+        safe_title = html.escape(comp.get('title', 'Component'))
         rows_xml += f"""<cell showlabel="true" locklevel="0">
-  <labels><label description="{comp.get('title', 'Component')}" languagecode="1033"/></labels>
+  <labels><label description="{safe_title}" languagecode="1033"/></labels>
   <control id="control{i}" classid="{{E7A81278-8635-4d9e-8D4D-59480B391C5B}}" isrequired="false"/>
 </cell>"""
         if col == 1 or i == len(components) - 1:
@@ -236,7 +238,7 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
     form_xml = f"""<form>
   <tabs>
     <tab name="tab_0" id="{{c58ee3c2-79ba-4bcc-8dd7-b6ef3b4b6456}}" locklevel="0" showlabel="false" expanded="true">
-      <labels><label description="{name}" languagecode="1033"/></labels>
+      <labels><label description="{safe_name}" languagecode="1033"/></labels>
       <columns>
         <column width="100%">
           <sections>
