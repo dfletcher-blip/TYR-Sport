@@ -264,6 +264,14 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
 
     result = crm_post("systemforms", dashboard_data)
 
+    # Publish so the dashboard is visible immediately
+    try:
+        crm_action("PublishXml", {
+            "ParameterXml": "<importexportxml><dashboards><dashboard></dashboard></dashboards></importexportxml>"
+        })
+    except Exception:
+        pass  # Non-fatal — dashboard exists, may just need a manual publish
+
     return {
         "success": True,
         "dashboard_name": name,
