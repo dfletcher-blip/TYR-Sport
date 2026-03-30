@@ -262,22 +262,30 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
         "objecttypecode": "none",  # Global dashboard (not entity-specific)
     }
 
-    result = crm_post("systemforms", dashboard_data)
+    try:
+        result = crm_post("systemforms", dashboard_data)
+    except RuntimeError as e:
+        return {"success": False, "error": str(e)}
+
+    dashboard_id = result.get("formid", "") if isinstance(result, dict) else ""
 
     # Publish so the dashboard is visible immediately
     try:
         crm_action("PublishXml", {
             "ParameterXml": "<importexportxml><dashboards><dashboard></dashboard></dashboards></importexportxml>"
         })
+        published = True
     except Exception:
-        pass  # Non-fatal — dashboard exists, may just need a manual publish
+        published = False
 
     return {
         "success": True,
+        "dashboard_id": dashboard_id,
         "dashboard_name": name,
         "description": description,
         "components_added": len(components),
-        "message": f"Dashboard '{name}' has been created",
+        "published": published,
+        "message": f"Dashboard '{name}' has been created and {'published' if published else 'saved (may need manual publish)'}",
         "note": "Open your CRM and navigate to Dashboards to see it",
     }
 
