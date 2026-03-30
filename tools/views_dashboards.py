@@ -235,12 +235,12 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
 
     form_xml = f"""<form>
   <tabs>
-    <tab name="tab_0" id="{{c58ee3c2-79ba-4bcc-8dd7-b6ef3b4b6456}}" IsUserDefined="0" locklevel="0" showlabel="false" expanded="true">
+    <tab name="tab_0" id="{{c58ee3c2-79ba-4bcc-8dd7-b6ef3b4b6456}}" locklevel="0" showlabel="false" expanded="true">
       <labels><label description="{name}" languagecode="1033"/></labels>
       <columns>
         <column width="100%">
           <sections>
-            <section name="section_0" showlabel="false" showbar="false" locklevel="0" id="{{0e9dd3f4-98e0-4536-a3c9-56b5e38a8b4a}}" IsUserDefined="0" layout="varwidth" columns="2">
+            <section name="section_0" showlabel="false" showbar="false" locklevel="0" id="{{0e9dd3f4-98e0-4536-a3c9-56b5e38a8b4a}}" layout="varwidth" columns="2">
               <labels><label description="Section" languagecode="1033"/></labels>
               <rows>{rows_xml}</rows>
             </section>
