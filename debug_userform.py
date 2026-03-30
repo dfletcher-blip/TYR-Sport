@@ -2,11 +2,13 @@
 Quick test: try creating a personal dashboard (userform) and report exactly what happens.
 Run with: python debug_userform.py
 """
-import os, json
+import os, json, requests
 from dotenv import load_dotenv
 load_dotenv()
 
-from config.crm_connection import crm_get, crm_post
+from config.crm_connection import crm_get, get_access_token
+
+DYNAMICS_URL = os.getenv("DYNAMICS_URL", "").rstrip("/")
 
 # Step 1: Look up the user
 email = os.getenv("DYNAMICS_USER_EMAIL", "")
@@ -20,16 +22,17 @@ result = crm_get("systemusers", {
 users = result.get("value", [])
 print(f"Found {len(users)} user(s):")
 for u in users:
-    print(f"  - {u.get('fullname')} | {u.get('internalemailaddress')} | {u.get('domainname')} | ID: {u.get('systemuserid')}")
+    print(f"  - {u.get('fullname')} | {u.get('internalemailaddress')} | ID: {u.get('systemuserid')}")
 
 if not users:
     print("ERROR: User not found. Check DYNAMICS_USER_EMAIL in .env")
     exit(1)
 
 user_id = users[0]["systemuserid"]
+print(f"\nUsing user ID: {user_id}")
 
-# Step 2: Try creating a simple userform
-print("\nCreating test personal dashboard (userform)...")
+# Step 2: Try creating a userform WITH impersonation (MSCRMCallerID header)
+print("\nCreating test personal dashboard with impersonation...")
 form_xml = """<form>
   <tabs>
     <tab name="tab_0" id="{c58ee3c2-79ba-4bcc-8dd7-b6ef3b4b6456}" locklevel="0" showlabel="false" expanded="true">
@@ -61,12 +64,22 @@ data = {
     "type": 0,
     "formxml": form_xml,
     "objecttypecode": "none",
-    "ownerid@odata.bind": f"/systemusers({user_id})",
 }
 
-try:
-    result = crm_post("userforms", data)
-    print(f"SUCCESS: {result}")
-    print("\nCheck your CRM under My Dashboards — 'Agent Test Dashboard (delete me)' should appear.")
-except Exception as e:
-    print(f"FAILED: {e}")
+token = get_access_token()
+headers = {
+    "Authorization": f"Bearer {token}",
+    "OData-MaxVersion": "4.0",
+    "OData-Version": "4.0",
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "MSCRMCallerID": user_id,  # Impersonate Dillon
+}
+
+response = requests.post(f"{DYNAMICS_URL}/api/data/v9.2/userforms", headers=headers, json=data)
+if response.ok:
+    print(f"SUCCESS! Status: {response.status_code}")
+    print("Check your CRM under My Dashboards — 'Agent Test Dashboard (delete me)' should appear.")
+else:
+    print(f"FAILED ({response.status_code}): {response.text[:500]}")
+

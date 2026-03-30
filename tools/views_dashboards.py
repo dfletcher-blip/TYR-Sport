@@ -12,7 +12,8 @@ from dotenv import load_dotenv
 load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from config.crm_connection import crm_get, crm_post, crm_patch, crm_action
+import requests as _requests
+from config.crm_connection import crm_get, crm_post, crm_patch, crm_action, get_access_token, DYNAMICS_URL
 
 
 def list_views(entity: str = "contact") -> dict:
@@ -283,13 +284,28 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
         "objecttypecode": "none",
     }
 
-    if owner_id:
-        dashboard_data["ownerid@odata.bind"] = f"/systemusers({owner_id})"
-
-    # Create as personal dashboard (userform) — always visible in My Dashboards
+    # Create as personal dashboard (userform) using impersonation so it is
+    # owned by and visible to the configured user (not the app service account)
     try:
-        crm_post("userforms", dashboard_data)
-    except RuntimeError as e:
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        if owner_id:
+            headers["MSCRMCallerID"] = owner_id
+
+        response = _requests.post(
+            f"{DYNAMICS_URL}/api/data/v9.2/userforms",
+            headers=headers,
+            json=dashboard_data,
+        )
+        if not response.ok:
+            return {"success": False, "error": f"CRM error ({response.status_code}): {response.text[:400]}"}
+    except Exception as e:
         return {"success": False, "error": str(e)}
 
     return {
