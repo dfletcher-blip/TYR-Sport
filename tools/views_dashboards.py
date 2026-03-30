@@ -271,9 +271,7 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
 
     # Publish so the dashboard is visible immediately
     try:
-        crm_action("PublishXml", {
-            "ParameterXml": "<importexportxml><dashboards><dashboard></dashboard></dashboards></importexportxml>"
-        })
+        crm_action("PublishAllXml", {})
         published = True
     except Exception:
         published = False
@@ -288,6 +286,18 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
         "message": f"Dashboard '{name}' has been created and {'published' if published else 'saved (may need manual publish)'}",
         "note": "Open your CRM and navigate to Dashboards to see it",
     }
+
+
+def publish_all_dashboards() -> dict:
+    """
+    Publish all dashboards and customizations so they become visible in the CRM.
+    Use this if dashboards exist in the list but are not showing up in the UI.
+    """
+    try:
+        crm_action("PublishAllXml", {})
+        return {"success": True, "message": "All dashboards published. Refresh your CRM browser tab to see them."}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 def get_dashboard_details(name_or_id: str) -> dict:

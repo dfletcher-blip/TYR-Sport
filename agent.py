@@ -46,6 +46,7 @@ from tools.views_dashboards import (
     create_contact_view,
     list_dashboards,
     create_dashboard,
+    publish_all_dashboards,
     get_views_summary,
     get_dashboard_details,
     reorder_dashboard_components,
@@ -198,6 +199,7 @@ TOOL_REGISTRY = {
     "create_contact_view":         create_contact_view,
     "list_dashboards":             list_dashboards,
     "create_dashboard":            create_dashboard,
+    "publish_all_dashboards":      publish_all_dashboards,
     "get_views_summary":           get_views_summary,
     "get_dashboard_details":       get_dashboard_details,
     "reorder_dashboard_components": reorder_dashboard_components,
@@ -494,6 +496,11 @@ TOOL_DEFINITIONS = [
             },
             "required": ["name", "description"],
         },
+    },
+    {
+        "name": "publish_all_dashboards",
+        "description": "Publish all dashboards so they become visible in the CRM. Use this if dashboards exist but are not showing up in the UI.",
+        "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "get_views_summary",
