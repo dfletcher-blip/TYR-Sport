@@ -1063,9 +1063,8 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
     # Agentic loop — Claude keeps working until the task is done
     while True:
         response = client.messages.create(
-            model="claude-opus-4-6",
+            model="claude-sonnet-4-6",
             max_tokens=8192,
-            thinking={"type": "adaptive"},  # Let Claude reason through complex tasks
             system=system,
             tools=TOOL_DEFINITIONS,
             messages=messages,
