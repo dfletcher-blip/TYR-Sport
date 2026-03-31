@@ -414,6 +414,72 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
     }
 
 
+def delete_dashboard(name_or_id: str) -> dict:
+    """
+    Delete a personal dashboard (userform) by name or ID.
+    Only deletes dashboards owned by the configured user — will not delete system dashboards.
+
+    name_or_id: the dashboard name (e.g. "Opportunities Dashboard") or its GUID.
+    """
+    import re
+    guid_pattern = re.compile(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE
+    )
+
+    user_email = os.getenv("DYNAMICS_USER_EMAIL", "")
+    owner_id = None
+    if user_email:
+        try:
+            owner_id = _get_user_id(user_email)
+        except Exception:
+            pass
+
+    escaped = name_or_id.replace("'", "''")
+
+    if guid_pattern.match(name_or_id):
+        params = {"$filter": f"userformid eq {name_or_id}", "$select": "userformid,name"}
+    else:
+        params = {"$filter": f"contains(name,'{escaped}')", "$select": "userformid,name"}
+
+    result = crm_get("userforms", params)
+    dashboards = result.get("value", [])
+
+    if not dashboards:
+        return {"success": False, "error": f"No personal dashboard found matching '{name_or_id}'."}
+
+    deleted = []
+    errors = []
+    for db in dashboards:
+        db_id = db.get("userformid")
+        db_name = db.get("name")
+        try:
+            token = get_access_token()
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "OData-MaxVersion": "4.0",
+                "OData-Version": "4.0",
+            }
+            if owner_id:
+                headers["MSCRMCallerID"] = owner_id
+            response = _requests.delete(
+                f"{DYNAMICS_URL}/api/data/v9.2/userforms({db_id})",
+                headers=headers,
+            )
+            if response.ok:
+                deleted.append(db_name)
+            else:
+                errors.append(f"{db_name}: {response.text[:200]}")
+        except Exception as e:
+            errors.append(f"{db_name}: {str(e)}")
+
+    return {
+        "success": len(deleted) > 0,
+        "deleted": deleted,
+        "errors": errors,
+        "message": f"Deleted {len(deleted)} dashboard(s): {', '.join(deleted)}" if deleted else "Nothing deleted.",
+    }
+
+
 def publish_all_dashboards() -> dict:
     """
     Publish all dashboards and customizations so they become visible in the CRM.

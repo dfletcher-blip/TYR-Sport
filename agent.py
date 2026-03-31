@@ -47,6 +47,7 @@ from tools.views_dashboards import (
     create_contact_view,
     list_dashboards,
     create_dashboard,
+    delete_dashboard,
     publish_all_dashboards,
     get_views_summary,
     get_dashboard_details,
@@ -203,6 +204,7 @@ TOOL_REGISTRY = {
     "create_contact_view":         create_contact_view,
     "list_dashboards":             list_dashboards,
     "create_dashboard":            create_dashboard,
+    "delete_dashboard":            delete_dashboard,
     "publish_all_dashboards":      publish_all_dashboards,
     "get_views_summary":           get_views_summary,
     "get_dashboard_details":       get_dashboard_details,
@@ -517,6 +519,17 @@ TOOL_DEFINITIONS = [
                 },
             },
             "required": ["name", "description"],
+        },
+    },
+    {
+        "name": "delete_dashboard",
+        "description": "Delete a personal dashboard by name or ID.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name_or_id": {"type": "string", "description": "Dashboard name or GUID to delete"},
+            },
+            "required": ["name_or_id"],
         },
     },
     {
