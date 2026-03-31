@@ -212,26 +212,114 @@ def _get_user_id(email: str) -> str:
     return users[0]["systemuserid"]
 
 
+def _get_view_id(entity: str, view_name: str) -> str:
+    """Look up a saved query (view) ID by entity and name."""
+    result = crm_get("savedqueries", {
+        "$filter": f"returnedtypecode eq '{entity}' and name eq '{view_name}' and querytype eq 0",
+        "$select": "savedqueryid,name",
+        "$top": 1,
+    })
+    rows = result.get("value", [])
+    if not rows:
+        # Fallback: get any active view for this entity
+        result2 = crm_get("savedqueries", {
+            "$filter": f"returnedtypecode eq '{entity}' and querytype eq 0 and statecode eq 0",
+            "$select": "savedqueryid,name",
+            "$top": 1,
+        })
+        rows = result2.get("value", [])
+    return rows[0]["savedqueryid"] if rows else ""
+
+
+def _get_chart_id(entity: str, chart_name: str) -> str:
+    """Look up a saved query visualization (chart) ID by entity and name."""
+    result = crm_get("savedqueryvisualizations", {
+        "$filter": f"primaryentitytypecode eq '{entity}' and name eq '{chart_name}'",
+        "$select": "savedqueryvisualizationid,name",
+        "$top": 1,
+    })
+    rows = result.get("value", [])
+    if not rows:
+        # Fallback: get any chart for this entity
+        result2 = crm_get("savedqueryvisualizations", {
+            "$filter": f"primaryentitytypecode eq '{entity}'",
+            "$select": "savedqueryvisualizationid,name",
+            "$top": 1,
+        })
+        rows = result2.get("value", [])
+    return rows[0]["savedqueryvisualizationid"] if rows else ""
+
+
+def _build_component_xml(i: int, comp: dict) -> str:
+    """
+    Build XML for a single dashboard component (list or chart).
+    Looks up real view/chart GUIDs so the component renders properly.
+
+    comp keys:
+      type       : "list" or "chart"
+      title      : display label
+      entity     : CRM entity logical name (e.g. "opportunity")
+      view_name  : (optional) name of the saved view to show
+      chart_name : (optional) name of the chart to show
+    """
+    entity = comp.get("entity", "opportunity")
+    comp_type = comp.get("type", "list")
+    safe_title = html.escape(comp.get("title", "Component"))
+
+    view_id = _get_view_id(entity, comp.get("view_name", ""))
+    if not view_id:
+        return ""  # Can't build component without a view
+
+    chart_id = ""
+    if comp_type == "chart":
+        chart_id = _get_chart_id(entity, comp.get("chart_name", ""))
+
+    grid_mode = "Chart" if (comp_type == "chart" and chart_id) else "Grid"
+    enable_chart_picker = "true" if comp_type == "chart" else "false"
+    enable_quick_find = "false" if comp_type == "chart" else "true"
+
+    return f"""<cell showlabel="true" locklevel="0">
+  <labels><label description="{safe_title}" languagecode="1033"/></labels>
+  <control id="control{i}" classid="{{E7A81278-8635-4d9e-8D4D-59480B391C5B}}" isrequired="false">
+    <parameters>
+      <ViewId>{{{view_id}}}</ViewId>
+      <IsUserView>false</IsUserView>
+      <RelationshipName/>
+      <TargetEntityType>{entity}</TargetEntityType>
+      <AutoExpand>Fixed</AutoExpand>
+      <EnableQuickFind>{enable_quick_find}</EnableQuickFind>
+      <EnableViewPicker>true</EnableViewPicker>
+      <EnableJumpBar>false</EnableJumpBar>
+      <ChartGridMode>{grid_mode}</ChartGridMode>
+      <VisualizationId>{("{" + chart_id + "}") if chart_id else ""}</VisualizationId>
+      <EnableChartPicker>{enable_chart_picker}</EnableChartPicker>
+      <RecordsPerPage>6</RecordsPerPage>
+    </parameters>
+  </control>
+</cell>"""
+
+
 def create_dashboard(name: str, description: str, components: list = None) -> dict:
     """
     Create a new personal dashboard in the CRM, visible immediately in My Dashboards.
 
     name: display name, e.g. "Opportunity Pipeline Dashboard"
     description: what this dashboard shows
-    components: list of components to include. Each item is a dict:
+    components: list of components. Each item:
         {
             "type": "chart" or "list",
-            "title": "Component Title",
-            "entity": "contact" or "lead" etc.
+            "title": "Display Title",
+            "entity": "opportunity",
+            "view_name": "Open Opportunities",   # name of view to show
+            "chart_name": "Pipeline by Stage",   # name of chart (for type=chart)
         }
 
     Returns confirmation and the dashboard ID.
     """
     if components is None:
         components = [
-            {"type": "list",  "title": "Recent Contacts",       "entity": "contact"},
-            {"type": "chart", "title": "Contacts by Status",     "entity": "contact"},
-            {"type": "list",  "title": "Contacts Missing Email", "entity": "contact"},
+            {"type": "list",  "title": "Recent Contacts",       "entity": "contact",     "view_name": "Active Contacts"},
+            {"type": "chart", "title": "Contacts by Status",     "entity": "contact",     "view_name": "Active Contacts"},
         ]
 
     # Look up the dashboard owner from .env
@@ -243,20 +331,28 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
         except Exception:
             owner_id = None
 
-    # Build form XML
+    # Build form XML with real view/chart references
     safe_name = html.escape(name)
     rows_xml = ""
+    built = 0
     for i, comp in enumerate(components[:6]):
-        col = i % 2
+        cell_xml = _build_component_xml(i, comp)
+        if not cell_xml:
+            continue
+        col = built % 2
         if col == 0:
             rows_xml += "<row>"
-        safe_title = html.escape(comp.get('title', 'Component'))
-        rows_xml += f"""<cell showlabel="true" locklevel="0">
-  <labels><label description="{safe_title}" languagecode="1033"/></labels>
-  <control id="control{i}" classid="{{E7A81278-8635-4d9e-8D4D-59480B391C5B}}" isrequired="false"/>
-</cell>"""
+        rows_xml += cell_xml
+        built += 1
         if col == 1 or i == len(components) - 1:
             rows_xml += "</row>"
+
+    if not rows_xml:
+        return {"success": False, "error": "Could not find any views for the requested components. Check entity names and view names."}
+
+    # Pad to even number of cells if needed
+    if built % 2 == 1:
+        rows_xml += "<cell showlabel='false' locklevel='0'><labels><label description='' languagecode='1033'/></labels></cell></row>"
 
     form_xml = f"""<form>
   <tabs>
@@ -312,9 +408,9 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
         "success": True,
         "dashboard_name": name,
         "description": description,
-        "components_added": len(components),
+        "components_added": built,
         "owner": user_email or "service account",
-        "message": f"Dashboard '{name}' created successfully. Refresh your CRM and look under My Dashboards.",
+        "message": f"Dashboard '{name}' created with {built} component(s). Refresh your CRM and look under My Dashboards.",
     }
 
 
