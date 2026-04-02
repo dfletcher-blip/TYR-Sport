@@ -3,10 +3,16 @@
 # ============================================================
 # Lets the agent save what it learns about the CRM so it
 # doesn't have to rediscover things every session.
+#
+# Two types of memory:
+#   1. CRM facts  — field names, entity names, known quirks
+#   2. Conversation history — summaries of past sessions so
+#      the agent remembers what was discussed and decided
 # ============================================================
 
 import os
 import json
+from datetime import datetime, timezone
 
 MEMORY_PATH = os.path.join(os.path.dirname(__file__), "..", "crm_memory.json")
 
@@ -60,5 +66,78 @@ def read_crm_memory() -> dict:
         with open(MEMORY_PATH, "r") as f:
             memory = json.load(f)
         return {"success": True, "memory": memory}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def save_session_summary(summary: str, actions_taken: list = None, decisions_made: list = None) -> dict:
+    """
+    Save a summary of this conversation session to persistent memory.
+    Call this at the end of a session or whenever something important
+    was discussed or decided that should be remembered next time.
+
+    summary:         2-4 sentence description of what was discussed and done
+    actions_taken:   list of specific things that were changed in the CRM
+    decisions_made:  list of decisions or preferences the user expressed
+                     (e.g. "user prefers dashboards sorted by owner")
+
+    Returns confirmation the summary was saved.
+    """
+    try:
+        if os.path.exists(MEMORY_PATH):
+            with open(MEMORY_PATH, "r") as f:
+                memory = json.load(f)
+        else:
+            memory = {}
+
+        if "conversation_history" not in memory:
+            memory["conversation_history"] = []
+
+        entry = {
+            "date":            datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "summary":         summary,
+            "actions_taken":   actions_taken or [],
+            "decisions_made":  decisions_made or [],
+        }
+
+        # Keep the last 20 session summaries
+        memory["conversation_history"].insert(0, entry)
+        memory["conversation_history"] = memory["conversation_history"][:20]
+
+        with open(MEMORY_PATH, "w") as f:
+            json.dump(memory, f, indent=2)
+
+        return {"success": True, "message": "Session summary saved to memory."}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def get_conversation_history(limit: int = 5) -> dict:
+    """
+    Read the summaries of past conversation sessions.
+    Use this at the start of a session to recall what was previously
+    discussed, what changes were made, and what the user prefers.
+
+    limit: how many past sessions to return (default 5, max 20)
+
+    Returns recent session summaries in reverse chronological order.
+    """
+    try:
+        if not os.path.exists(MEMORY_PATH):
+            return {"success": True, "history": [], "message": "No conversation history yet."}
+
+        with open(MEMORY_PATH, "r") as f:
+            memory = json.load(f)
+
+        history = memory.get("conversation_history", [])[:limit]
+
+        return {
+            "success":       True,
+            "total_sessions": len(memory.get("conversation_history", [])),
+            "showing":       len(history),
+            "history":       history,
+        }
+
     except Exception as e:
         return {"success": False, "error": str(e)}

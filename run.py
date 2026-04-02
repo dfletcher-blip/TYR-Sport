@@ -117,6 +117,28 @@ def test_crm_connection() -> bool:
         return False
 
 
+def _save_and_exit(session_messages: list, turn_count: int):
+    """
+    If the session had meaningful activity, ask the agent to save a summary
+    before exiting so it remembers this conversation next time.
+    """
+    if turn_count == 0:
+        print("\nGoodbye!")
+        return
+
+    print("\nSaving session summary...")
+    try:
+        _, _ = run_agent(
+            "Please save a summary of what we discussed and accomplished this session "
+            "using save_session_summary(). Include any important actions taken and "
+            "preferences I expressed. Then say goodbye briefly.",
+            session_messages=session_messages,
+        )
+    except Exception:
+        pass
+    print("Goodbye!")
+
+
 def main():
     print(BANNER)
 
@@ -132,19 +154,24 @@ def main():
 
     print("\n✓ Ready! Enter your request below.\n")
 
+    # Session-level conversation history — maintained across all turns
+    session_messages = []
+    turn_count = 0
+
     # Step 3: Interactive loop — keep asking for requests
     while True:
         try:
             user_input = input("You: ").strip()
         except (EOFError, KeyboardInterrupt):
-            print("\n\nGoodbye!")
+            print("\n")
+            _save_and_exit(session_messages, turn_count)
             break
 
         if not user_input:
             continue
 
         if user_input.lower() in ("quit", "exit", "q"):
-            print("\nGoodbye!")
+            _save_and_exit(session_messages, turn_count)
             break
 
         if user_input.lower() == "help":
@@ -160,9 +187,14 @@ def main():
             request = user_input[8:].strip()
             print("\n  [DRY RUN MODE — no changes will be made]\n")
 
-        # Run the agent
+        # Run the agent — pass and receive session messages for multi-turn memory
         try:
-            response = run_agent(request, dry_run=dry_run)
+            response, session_messages = run_agent(
+                request,
+                dry_run=dry_run,
+                session_messages=session_messages,
+            )
+            turn_count += 1
             print(f"\n{'═' * 60}")
             print(f"Agent:\n{response}")
             print(f"{'═' * 60}\n")

@@ -41,7 +41,7 @@ from tools.workflows import (
     retry_failed_workflow_runs,
     clone_workflow,
 )
-from tools.memory import update_crm_memory, read_crm_memory
+from tools.memory import update_crm_memory, read_crm_memory, save_session_summary, get_conversation_history
 from tools.views_dashboards import (
     list_views,
     create_contact_view,
@@ -202,6 +202,8 @@ HOW YOU WORK:
 - For any UPDATE or CREATE action, state what you are about to do and why
 - After completing a task, give a clear SUMMARY of what was done
 - If something could cause problems, warn the user first
+- At the start of a NEW session (first message), call get_conversation_history() to recall what was previously discussed
+- When wrapping up significant work, call save_session_summary() to record what was done for next time
 
 SAFETY RULES:
 - Never delete contacts without explicit permission
@@ -223,9 +225,11 @@ COMMUNICATION STYLE:
 # This maps function names (what Claude calls) to actual code
 
 TOOL_REGISTRY = {
-    # Contact tools
+    # Memory tools
     "update_crm_memory":           update_crm_memory,
     "read_crm_memory":             read_crm_memory,
+    "save_session_summary":        save_session_summary,
+    "get_conversation_history":    get_conversation_history,
     "search_contacts":             search_contacts,
     "find_contacts_missing_data":  find_contacts_missing_data,
     "find_duplicate_contacts":     find_duplicate_contacts,
@@ -391,6 +395,29 @@ TOOL_DEFINITIONS = [
         "name": "read_crm_memory",
         "description": "Read the full persistent CRM memory to see what is already known about this CRM.",
         "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "save_session_summary",
+        "description": "Save a summary of this conversation to persistent memory so it can be recalled next session. Call this when wrapping up or after completing significant work.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "summary":        {"type": "string", "description": "2-4 sentence description of what was discussed and done this session"},
+                "actions_taken":  {"type": "array",  "items": {"type": "string"}, "description": "List of specific changes made to the CRM"},
+                "decisions_made": {"type": "array",  "items": {"type": "string"}, "description": "List of user preferences or decisions expressed (e.g. 'user prefers dashboards sorted by owner')"},
+            },
+            "required": ["summary"],
+        },
+    },
+    {
+        "name": "get_conversation_history",
+        "description": "Read summaries of past conversation sessions to recall what was previously discussed, what changes were made, and what the user prefers.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "How many past sessions to return (default 5)"},
+            },
+        },
     },
     {
         "name": "search_contacts",
@@ -1536,15 +1563,19 @@ TOOL_DEFINITIONS = [
 ]
 
 
-def run_agent(user_request: str, dry_run: bool = False) -> str:
+def run_agent(user_request: str, dry_run: bool = False,
+              session_messages: list = None) -> tuple:
     """
     Run the CRM agent with a plain English request.
 
-    user_request: what you want the agent to do (plain English)
-    dry_run: if True, Claude will plan actions but NOT execute writes
-             Use this to preview what the agent would do before committing.
+    user_request:     what you want the agent to do (plain English)
+    dry_run:          if True, Claude will plan actions but NOT execute writes
+    session_messages: the conversation history from earlier in this session.
+                      Pass the list returned by a previous call to maintain
+                      multi-turn memory within a session.
 
-    Returns Claude's response as a string.
+    Returns (response_text, updated_session_messages) so the caller can
+    pass the messages back on the next turn.
     """
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -1567,7 +1598,9 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
             "that create, update, or delete records. Instead, describe what you WOULD do."
         )
 
-    messages = [{"role": "user", "content": user_request}]
+    # Build message list — continue from prior turns if provided
+    messages = list(session_messages) if session_messages else []
+    messages.append({"role": "user", "content": user_request})
 
     # Set up logging
     os.makedirs("logs", exist_ok=True)
@@ -1597,11 +1630,16 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
                     final_text = block.text
                     break
 
+            # Append Claude's response so the next turn has full context
+            messages.append({"role": "assistant", "content": [
+                {"type": "text", "text": final_text}
+            ]})
+
             # Save the log
             with open(log_file, "w") as f:
                 json.dump({"request": user_request, "actions": log_entries}, f, indent=2)
 
-            return final_text
+            return final_text, messages
 
         # Claude wants to use a tool — execute it
         if response.stop_reason == "tool_use":
@@ -1648,4 +1686,4 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
             # Unexpected stop reason — break the loop
             break
 
-    return "Task completed."
+    return "Task completed.", messages
