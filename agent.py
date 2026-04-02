@@ -119,6 +119,48 @@ from tools.form_customization import (
     add_fields_to_form,
     create_custom_field,
 )
+from tools.activities import (
+    get_tasks,
+    create_task,
+    complete_task,
+    get_phone_calls,
+    log_phone_call,
+    get_appointments,
+    create_appointment,
+    get_notes,
+    add_note,
+    get_activity_timeline,
+)
+from tools.audit_log import (
+    get_audit_history,
+    get_recent_changes,
+    get_deleted_records,
+    check_audit_status,
+)
+from tools.cloud_flows import (
+    list_cloud_flows,
+    get_cloud_flow_details,
+    get_cloud_flow_run_history,
+    enable_cloud_flow,
+    disable_cloud_flow,
+    search_cloud_flows,
+    get_cloud_flows_by_entity,
+    check_cloud_flow_health,
+    compare_classic_vs_cloud_flows,
+)
+from tools.security import (
+    list_security_roles,
+    get_role_details,
+    search_roles,
+    list_users,
+    get_user_details,
+    search_users,
+    assign_role_to_user,
+    remove_role_from_user,
+    get_users_with_no_roles,
+    get_admin_users,
+    get_security_summary,
+)
 
 
 # ============================================================
@@ -149,6 +191,10 @@ YOUR CAPABILITIES:
 12. SPECIAL TERMS (STR) — Search STR records, check pending approvals, find expiring agreements, view by account, manage approval workflows
 13. FORM CUSTOMIZATION — Add fields to entity forms, create custom fields (including dropdowns), inspect form layouts, publish changes
 14. MEMORY — Read and update persistent CRM memory to remember field names, entity names, and CRM-specific facts across sessions
+15. ACTIVITIES — Create and view tasks, log phone calls, schedule appointments, add and read notes on any record, view full activity timelines
+16. AUDIT LOG — See who changed what and when on any record, find recently deleted records, view all changes in the last N hours, check audit status
+17. CLOUD FLOWS (Power Automate) — List, search, enable/disable, and check health of modern Power Automate flows; compare with classic workflows
+18. SECURITY — List security roles, view user permissions, assign/remove roles, find users with no roles, review admin access
 
 HOW YOU WORK:
 - Always start by READING data before making any changes
@@ -277,6 +323,48 @@ TOOL_REGISTRY = {
     "send_email_to_lead":          send_email_to_lead,
     "send_bulk_email":             send_bulk_email,
     "get_email_history":           get_email_history,
+
+    # Activities tools
+    "get_tasks":                   get_tasks,
+    "create_task":                 create_task,
+    "complete_task":               complete_task,
+    "get_phone_calls":             get_phone_calls,
+    "log_phone_call":              log_phone_call,
+    "get_appointments":            get_appointments,
+    "create_appointment":          create_appointment,
+    "get_notes":                   get_notes,
+    "add_note":                    add_note,
+    "get_activity_timeline":       get_activity_timeline,
+
+    # Audit log tools
+    "get_audit_history":           get_audit_history,
+    "get_recent_changes":          get_recent_changes,
+    "get_deleted_records":         get_deleted_records,
+    "check_audit_status":          check_audit_status,
+
+    # Cloud flow (Power Automate) tools
+    "list_cloud_flows":            list_cloud_flows,
+    "get_cloud_flow_details":      get_cloud_flow_details,
+    "get_cloud_flow_run_history":  get_cloud_flow_run_history,
+    "enable_cloud_flow":           enable_cloud_flow,
+    "disable_cloud_flow":          disable_cloud_flow,
+    "search_cloud_flows":          search_cloud_flows,
+    "get_cloud_flows_by_entity":   get_cloud_flows_by_entity,
+    "check_cloud_flow_health":     check_cloud_flow_health,
+    "compare_classic_vs_cloud_flows": compare_classic_vs_cloud_flows,
+
+    # Security tools
+    "list_security_roles":         list_security_roles,
+    "get_role_details":            get_role_details,
+    "search_roles":                search_roles,
+    "list_users":                  list_users,
+    "get_user_details":            get_user_details,
+    "search_users":                search_users,
+    "assign_role_to_user":         assign_role_to_user,
+    "remove_role_from_user":       remove_role_from_user,
+    "get_users_with_no_roles":     get_users_with_no_roles,
+    "get_admin_users":             get_admin_users,
+    "get_security_summary":        get_security_summary,
 }
 
 
@@ -1067,6 +1155,383 @@ TOOL_DEFINITIONS = [
                 "limit": {"type": "integer", "description": "Max emails to return (default 20)"},
             },
         },
+    },
+
+    # ── ACTIVITIES ──────────────────────────────────────────
+    {
+        "name": "get_tasks",
+        "description": "Get tasks (to-do items) from the CRM, optionally filtered by record and status.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "regarding_id":   {"type": "string", "description": "ID of the record to get tasks for (leave blank for all tasks)"},
+                "regarding_type": {"type": "string", "description": "Type of record: contact, lead, account, opportunity"},
+                "status":         {"type": "string", "description": "open, completed, or all"},
+                "limit":          {"type": "integer", "description": "Max tasks to return (default 50)"},
+            },
+        },
+    },
+    {
+        "name": "create_task",
+        "description": "Create a new task (to-do item) linked to a CRM record.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "subject":        {"type": "string", "description": "Short title for the task"},
+                "regarding_id":   {"type": "string", "description": "ID of the record to attach this task to"},
+                "regarding_type": {"type": "string", "description": "Type: contact, lead, account, opportunity"},
+                "description":    {"type": "string", "description": "Longer notes about what needs to be done"},
+                "due_date":       {"type": "string", "description": "Due date in YYYY-MM-DD format"},
+                "priority":       {"type": "string", "description": "low, normal, or high"},
+            },
+            "required": ["subject", "regarding_id"],
+        },
+    },
+    {
+        "name": "complete_task",
+        "description": "Mark a task as completed.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The ID of the task to complete"},
+            },
+            "required": ["task_id"],
+        },
+    },
+    {
+        "name": "get_phone_calls",
+        "description": "Get logged phone call records from the CRM.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "regarding_id": {"type": "string", "description": "ID of the record to get calls for (leave blank for all)"},
+                "status":       {"type": "string", "description": "all, open, or completed"},
+                "limit":        {"type": "integer", "description": "Max records to return (default 50)"},
+            },
+        },
+    },
+    {
+        "name": "log_phone_call",
+        "description": "Log a phone call against a CRM record.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "subject":        {"type": "string", "description": "What the call was about"},
+                "regarding_id":   {"type": "string", "description": "ID of the contact, lead, account, or opportunity"},
+                "regarding_type": {"type": "string", "description": "Type: contact, lead, account, opportunity"},
+                "description":    {"type": "string", "description": "Notes from the call"},
+                "direction":      {"type": "string", "description": "outbound (you called them) or inbound (they called you)"},
+                "call_date":      {"type": "string", "description": "When the call happened — YYYY-MM-DDTHH:MM:SSZ"},
+            },
+            "required": ["subject", "regarding_id"],
+        },
+    },
+    {
+        "name": "get_appointments",
+        "description": "Get appointments (meetings) from the CRM.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "regarding_id": {"type": "string", "description": "ID of the record to get appointments for"},
+                "status":       {"type": "string", "description": "upcoming, completed, or all"},
+                "limit":        {"type": "integer", "description": "Max records to return (default 50)"},
+            },
+        },
+    },
+    {
+        "name": "create_appointment",
+        "description": "Create a new appointment (meeting) in the CRM.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "subject":        {"type": "string", "description": "Title of the meeting"},
+                "start":          {"type": "string", "description": "Start time — YYYY-MM-DDTHH:MM:SSZ"},
+                "end":            {"type": "string", "description": "End time — YYYY-MM-DDTHH:MM:SSZ"},
+                "regarding_id":   {"type": "string", "description": "ID of the record to link this to (optional)"},
+                "regarding_type": {"type": "string", "description": "Type: contact, lead, account, opportunity"},
+                "location":       {"type": "string", "description": "Where the meeting is"},
+                "description":    {"type": "string", "description": "Agenda or notes"},
+            },
+            "required": ["subject", "start", "end"],
+        },
+    },
+    {
+        "name": "get_notes",
+        "description": "Get all notes attached to a CRM record.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "regarding_id":   {"type": "string", "description": "ID of the record to get notes for"},
+                "regarding_type": {"type": "string", "description": "Type: contact, lead, account, opportunity"},
+                "limit":          {"type": "integer", "description": "Max notes to return (default 50)"},
+            },
+            "required": ["regarding_id"],
+        },
+    },
+    {
+        "name": "add_note",
+        "description": "Add a note to a CRM record.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "regarding_id":   {"type": "string", "description": "ID of the record to attach the note to"},
+                "regarding_type": {"type": "string", "description": "Type: contact, lead, account, opportunity"},
+                "text":           {"type": "string", "description": "The body of the note"},
+                "subject":        {"type": "string", "description": "Short title for the note"},
+            },
+            "required": ["regarding_id", "regarding_type", "text"],
+        },
+    },
+    {
+        "name": "get_activity_timeline",
+        "description": "Get the full activity timeline for a CRM record — all tasks, calls, appointments, and notes in one view.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "regarding_id":   {"type": "string", "description": "ID of the record"},
+                "regarding_type": {"type": "string", "description": "Type: contact, lead, account, opportunity"},
+                "limit":          {"type": "integer", "description": "Max items per activity type (default 30)"},
+            },
+            "required": ["regarding_id"],
+        },
+    },
+
+    # ── AUDIT LOG ────────────────────────────────────────────
+    {
+        "name": "get_audit_history",
+        "description": "Get the full change history for a specific CRM record — who changed what and when.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "record_id":   {"type": "string", "description": "The ID of the record to inspect"},
+                "record_type": {"type": "string", "description": "Type: contact, lead, account, opportunity, workflow"},
+                "limit":       {"type": "integer", "description": "Max audit entries to return (default 50)"},
+            },
+            "required": ["record_id"],
+        },
+    },
+    {
+        "name": "get_recent_changes",
+        "description": "Get all recent changes across a record type in the last N hours — useful for daily audits.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity_type": {"type": "string", "description": "contact, lead, account, or opportunity"},
+                "hours":       {"type": "integer", "description": "How far back to look (default 24)"},
+                "limit":       {"type": "integer", "description": "Max records to return (default 100)"},
+            },
+        },
+    },
+    {
+        "name": "get_deleted_records",
+        "description": "Find recently deleted records of a given type — useful for recovering accidentally deleted data.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity_type": {"type": "string", "description": "contact, lead, account, or opportunity"},
+                "limit":       {"type": "integer", "description": "Max records to return (default 50)"},
+            },
+        },
+    },
+    {
+        "name": "check_audit_status",
+        "description": "Check whether auditing is enabled in this Dynamics 365 org.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+
+    # ── CLOUD FLOWS ──────────────────────────────────────────
+    {
+        "name": "list_cloud_flows",
+        "description": "List all Power Automate cloud flows connected to this CRM.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "description": "all, active, or inactive"},
+            },
+        },
+    },
+    {
+        "name": "get_cloud_flow_details",
+        "description": "Get detailed information about a specific cloud flow.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "flow_id": {"type": "string", "description": "The ID of the cloud flow"},
+            },
+            "required": ["flow_id"],
+        },
+    },
+    {
+        "name": "get_cloud_flow_run_history",
+        "description": "Get the recent run history for a cloud flow — shows success/failure and timing.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "flow_id": {"type": "string", "description": "The ID of the cloud flow"},
+                "limit":   {"type": "integer", "description": "Max run records to return (default 20)"},
+            },
+            "required": ["flow_id"],
+        },
+    },
+    {
+        "name": "enable_cloud_flow",
+        "description": "Enable (turn on) a Power Automate cloud flow.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "flow_id": {"type": "string", "description": "The ID of the cloud flow to enable"},
+            },
+            "required": ["flow_id"],
+        },
+    },
+    {
+        "name": "disable_cloud_flow",
+        "description": "Disable (turn off) a Power Automate cloud flow.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "flow_id": {"type": "string", "description": "The ID of the cloud flow to disable"},
+            },
+            "required": ["flow_id"],
+        },
+    },
+    {
+        "name": "search_cloud_flows",
+        "description": "Search for cloud flows by name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "search_term": {"type": "string", "description": "Part of the flow name to search for"},
+            },
+            "required": ["search_term"],
+        },
+    },
+    {
+        "name": "get_cloud_flows_by_entity",
+        "description": "Get all cloud flows that trigger on a specific entity type (e.g. contact, lead).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "description": "The entity name — e.g. contact, lead, account, opportunity"},
+            },
+            "required": ["entity"],
+        },
+    },
+    {
+        "name": "check_cloud_flow_health",
+        "description": "Run a health check across all cloud flows — finds inactive flows and recent failures.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "compare_classic_vs_cloud_flows",
+        "description": "Compare the count of classic CRM workflows vs modern Power Automate cloud flows.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+
+    # ── SECURITY ─────────────────────────────────────────────
+    {
+        "name": "list_security_roles",
+        "description": "List all security roles defined in this Dynamics 365 org.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max roles to return (default 100)"},
+            },
+        },
+    },
+    {
+        "name": "get_role_details",
+        "description": "Get details about a security role including which users have it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "role_id": {"type": "string", "description": "The ID of the security role"},
+            },
+            "required": ["role_id"],
+        },
+    },
+    {
+        "name": "search_roles",
+        "description": "Search for security roles by name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "search_term": {"type": "string", "description": "Part of the role name to search for"},
+            },
+            "required": ["search_term"],
+        },
+    },
+    {
+        "name": "list_users",
+        "description": "List users in the Dynamics 365 org.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "description": "active, disabled, or all"},
+                "limit":  {"type": "integer", "description": "Max users to return (default 100)"},
+            },
+        },
+    },
+    {
+        "name": "get_user_details",
+        "description": "Get full details for a user including their assigned security roles.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "The systemuserid of the user"},
+            },
+            "required": ["user_id"],
+        },
+    },
+    {
+        "name": "search_users",
+        "description": "Search for users by name or email.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "search_term": {"type": "string", "description": "Part of the name or email to search for"},
+            },
+            "required": ["search_term"],
+        },
+    },
+    {
+        "name": "assign_role_to_user",
+        "description": "Assign a security role to a user. WARNING: This changes what the user can access.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "The ID of the user"},
+                "role_id": {"type": "string", "description": "The ID of the security role to assign"},
+            },
+            "required": ["user_id", "role_id"],
+        },
+    },
+    {
+        "name": "remove_role_from_user",
+        "description": "Remove a security role from a user. WARNING: This reduces what the user can do.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "The ID of the user"},
+                "role_id": {"type": "string", "description": "The ID of the security role to remove"},
+            },
+            "required": ["user_id", "role_id"],
+        },
+    },
+    {
+        "name": "get_users_with_no_roles",
+        "description": "Find active users who have no security roles assigned — these users can't do anything in the CRM.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_admin_users",
+        "description": "Find all users with System Administrator access — the highest privilege in Dynamics 365.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_security_summary",
+        "description": "Get a high-level security overview — total users, admins, disabled accounts, and role coverage.",
+        "input_schema": {"type": "object", "properties": {}},
     },
 ]
 
