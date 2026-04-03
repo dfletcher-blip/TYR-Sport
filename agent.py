@@ -119,6 +119,13 @@ from tools.form_customization import (
     add_fields_to_form,
     create_custom_field,
 )
+from tools.charts import (
+    list_charts,
+    get_chart_xml,
+    update_chart_xml,
+    set_chart_y_axis_to_sum,
+    search_charts,
+)
 from tools.activities import (
     get_tasks,
     create_task,
@@ -190,6 +197,7 @@ YOUR CAPABILITIES:
 11. EMAIL — Send emails to contacts or leads, send bulk emails, view email history
 12. SPECIAL TERMS (STR) — Search STR records, check pending approvals, find expiring agreements, view by account, manage approval workflows
 13. FORM CUSTOMIZATION — Add fields to entity forms, create custom fields (including dropdowns), inspect form layouts, publish changes
+14. CHARTS — List, inspect, and update system chart XML directly; fix Y-axis aggregation (count → sum of estimatedvalue) for pipeline charts
 14. MEMORY — Read and update persistent CRM memory to remember field names, entity names, and CRM-specific facts across sessions
 15. ACTIVITIES — Create and view tasks, log phone calls, schedule appointments, add and read notes on any record, view full activity timelines
 16. AUDIT LOG — See who changed what and when on any record, find recently deleted records, view all changes in the last N hours, check audit status
@@ -225,6 +233,13 @@ COMMUNICATION STYLE:
 # This maps function names (what Claude calls) to actual code
 
 TOOL_REGISTRY = {
+    # Chart tools
+    "list_charts":                 list_charts,
+    "get_chart_xml":               get_chart_xml,
+    "update_chart_xml":            update_chart_xml,
+    "set_chart_y_axis_to_sum":     set_chart_y_axis_to_sum,
+    "search_charts":               search_charts,
+
     # Memory tools
     "update_crm_memory":           update_crm_memory,
     "read_crm_memory":             read_crm_memory,
@@ -378,6 +393,64 @@ TOOL_REGISTRY = {
 # Claude reads these to know what parameters each tool takes.
 
 TOOL_DEFINITIONS = [
+    {
+        "name": "list_charts",
+        "description": "List all system charts for a given entity (e.g. opportunity, contact, lead).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "description": "Entity name, e.g. opportunity, contact, lead"},
+            },
+        },
+    },
+    {
+        "name": "get_chart_xml",
+        "description": "Get the raw XML definition of a chart — shows what aggregation (count vs sum) and fields are used.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "chart_id": {"type": "string", "description": "The savedqueryvisualizationid of the chart"},
+            },
+            "required": ["chart_id"],
+        },
+    },
+    {
+        "name": "update_chart_xml",
+        "description": "Update the XML definition of a system chart directly via the API.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "chart_id":               {"type": "string", "description": "The chart ID to update"},
+                "data_description_xml":   {"type": "string", "description": "The full updated datadescription XML"},
+                "presentation_description": {"type": "string", "description": "Optionally update the presentation XML too"},
+            },
+            "required": ["chart_id", "data_description_xml"],
+        },
+    },
+    {
+        "name": "set_chart_y_axis_to_sum",
+        "description": "Change a chart's Y-axis from Count to Sum of a field (e.g. estimatedvalue). Fixes pipeline charts showing count of deals instead of total revenue.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "chart_id":   {"type": "string", "description": "The chart ID to update"},
+                "field_name": {"type": "string", "description": "Field to sum (default: estimatedvalue)"},
+            },
+            "required": ["chart_id"],
+        },
+    },
+    {
+        "name": "search_charts",
+        "description": "Search for charts by name within an entity.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "search_term": {"type": "string", "description": "Part of the chart name to search for"},
+                "entity":      {"type": "string", "description": "Entity to search within (default: opportunity)"},
+            },
+            "required": ["search_term"],
+        },
+    },
     {
         "name": "update_crm_memory",
         "description": "Save something you learned about this CRM to persistent memory so you remember it next session. Use this when you discover field names, entity names, user IDs, or other CRM-specific facts.",
