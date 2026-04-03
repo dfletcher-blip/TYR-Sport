@@ -1707,6 +1707,9 @@ def run_agent(user_request: str, dry_run: bool = False,
                         "content": json.dumps(result),
                     })
 
+            # Brief pause between tool call rounds to avoid rate limits
+            import time; time.sleep(3)
+
             # Feed the tool results back to Claude so it can continue
             messages.append({"role": "assistant", "content": response.content})
             messages.append({"role": "user", "content": tool_results})

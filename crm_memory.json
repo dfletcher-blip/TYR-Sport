@@ -18,6 +18,14 @@
       "close_date": "estimatedclosedate",
       "owner": "_ownerid_value"
     },
+    "account": {
+      "tyr_type_field": "tyr_tyrtype",
+      "tyr_tyrtype_option_values": {
+        "notes": "Use numeric option set values in OData filters, e.g. tyr_tyrtype eq 100000000",
+        "known_values_seen": ["477560001", "100000000", "100000006", "100000007"],
+        "inactive_value": "Use get_optionset_values(entity='account', field='tyr_tyrtype') to find the exact value for Inactive before filtering"
+      }
+    },
     "special_terms": {
       "notes": "Discover the correct entity API name at runtime using auto-discovery (tries tyr_specialterms, cr_specialterms, etc.)"
     }
