@@ -1599,10 +1599,25 @@ def run_agent(user_request: str, dry_run: bool = False,
         )
 
     # Build message list — continue from prior turns if provided.
-    # Keep only the last 10 messages (5 turns) to avoid hitting token limits.
+    # Keep only the last 10 messages, but always trim to a clean boundary:
+    # never start the history mid-turn with a tool_result block, since the
+    # API requires every tool_result to have a matching tool_use before it.
     prior = list(session_messages) if session_messages else []
     if len(prior) > 10:
         prior = prior[-10:]
+        # Walk forward until we find a plain user text message (not tool results)
+        # so we never start the context with orphaned tool_result blocks.
+        for i, msg in enumerate(prior):
+            content = msg.get("content", "")
+            is_tool_result = (
+                isinstance(content, list)
+                and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+            )
+            if msg.get("role") == "user" and not is_tool_result:
+                prior = prior[i:]
+                break
+        else:
+            prior = []  # no clean starting point — start fresh
     messages = prior + [{"role": "user", "content": user_request}]
 
     # Set up logging
