@@ -1631,13 +1631,24 @@ def run_agent(user_request: str, dry_run: bool = False,
 
     # Agentic loop — Claude keeps working until the task is done
     while True:
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=8192,
-            system=system,
-            tools=TOOL_DEFINITIONS,
-            messages=messages,
-        )
+        # Retry up to 3 times on rate limit errors, waiting between each attempt
+        for attempt in range(3):
+            try:
+                response = client.messages.create(
+                    model="claude-sonnet-4-6",
+                    max_tokens=4096,
+                    system=system,
+                    tools=TOOL_DEFINITIONS,
+                    messages=messages,
+                )
+                break  # success — exit retry loop
+            except anthropic.RateLimitError:
+                if attempt < 2:
+                    wait = 60 * (attempt + 1)  # 60s, then 120s
+                    print(f"\n  ⏳ Rate limit reached — waiting {wait}s before retrying...")
+                    import time; time.sleep(wait)
+                else:
+                    raise
 
         # Check if Claude is done (no more tools to call)
         if response.stop_reason == "end_turn":
