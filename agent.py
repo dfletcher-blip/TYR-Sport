@@ -1644,9 +1644,15 @@ def run_agent(user_request: str, dry_run: bool = False,
                 break  # success — exit retry loop
             except anthropic.RateLimitError:
                 if attempt < 2:
+                    import time
                     wait = 60 * (attempt + 1)  # 60s, then 120s
-                    print(f"\n  ⏳ Rate limit reached — waiting {wait}s before retrying...")
-                    import time; time.sleep(wait)
+                    print(f"\n  ⏳ Rate limit reached — waiting {wait}s (press Ctrl+C to cancel)...")
+                    try:
+                        for _ in range(wait):
+                            time.sleep(1)
+                    except KeyboardInterrupt:
+                        print("\n  Cancelled.")
+                        return "Request cancelled.", messages
                 else:
                     raise
 
@@ -1708,7 +1714,12 @@ def run_agent(user_request: str, dry_run: bool = False,
                     })
 
             # Brief pause between tool call rounds to avoid rate limits
-            import time; time.sleep(3)
+            import time
+            try:
+                time.sleep(3)
+            except KeyboardInterrupt:
+                print("\n  Cancelled.")
+                return "Request cancelled.", messages
 
             # Feed the tool results back to Claude so it can continue
             messages.append({"role": "assistant", "content": response.content})

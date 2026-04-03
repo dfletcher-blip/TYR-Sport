@@ -199,6 +199,8 @@ def main():
             print(f"Agent:\n{response}")
             print(f"{'═' * 60}\n")
 
+        except KeyboardInterrupt:
+            print("\n\n  Request cancelled — type a new request or 'quit' to exit.\n")
         except Exception as e:
             print(f"\n✗ Error: {e}")
             print("  Check the logs/ folder for details.\n")
