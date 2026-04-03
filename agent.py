@@ -1598,9 +1598,12 @@ def run_agent(user_request: str, dry_run: bool = False,
             "that create, update, or delete records. Instead, describe what you WOULD do."
         )
 
-    # Build message list — continue from prior turns if provided
-    messages = list(session_messages) if session_messages else []
-    messages.append({"role": "user", "content": user_request})
+    # Build message list — continue from prior turns if provided.
+    # Keep only the last 10 messages (5 turns) to avoid hitting token limits.
+    prior = list(session_messages) if session_messages else []
+    if len(prior) > 10:
+        prior = prior[-10:]
+    messages = prior + [{"role": "user", "content": user_request}]
 
     # Set up logging
     os.makedirs("logs", exist_ok=True)
