@@ -108,23 +108,24 @@ def set_chart_y_axis_to_sum(chart_id: str, field_name: str = "estimatedvalue") -
     if not original_xml:
         return {"error": "Could not retrieve chart XML. Chart may not exist."}
 
-    # Replace count aggregation with sum
-    # Dynamics chart XML uses: aggregate="count" → aggregate="sum" + add attribute
-    # and adds the field: alias="sum_field" attribute="field_name"
+    # Replace count aggregation with sum + add the field attribute.
+    # Exact pattern from Dynamics chart XML:
+    #   BEFORE: <measure alias="aggregate" aggregate="count"/>
+    #   AFTER:  <measure alias="aggregate" aggregate="sum" field="estimatedvalue"/>
     updated_xml = original_xml
 
-    # Pattern: change aggregate="count" to aggregate="sum"
+    # Replace aggregate="count" (with self-closing tag) → aggregate="sum" field="..."
     updated_xml = re.sub(
-        r'aggregate=["\']count["\']',
-        'aggregate="sum"',
+        r'aggregate=["\']count["\'](\s*/>)',
+        f'aggregate="sum" field="{field_name}"\\1',
         updated_xml,
         flags=re.IGNORECASE,
     )
 
-    # Pattern: if there's a generic count attribute, replace with the target field
+    # Also handle case where field attribute already exists but with wrong aggregate
     updated_xml = re.sub(
-        r'attribute=["\']opportunityid["\']',
-        f'attribute="{field_name}"',
+        r'aggregate=["\']count["\'](\s+field=["\'][^"\']*["\'])',
+        f'aggregate="sum" field="{field_name}"',
         updated_xml,
         flags=re.IGNORECASE,
     )
