@@ -33,14 +33,14 @@ def run():
     print(f"\n{'Previewing' if dry_run else 'Running'} sync...\n")
     result = sync_contact_field_from_account("tyr_tyrtype", "tyr_tyrtype", dry_run=dry_run)
 
-    print(f"Accounts with TYR Type set: {result['accounts_with_field_set']}")
+    print(f"Contacts checked: {result['total_contacts_checked']}")
     print(f"Contacts {'that would be' if dry_run else ''} updated: {result['contacts_updated']}")
-    print(f"Contacts already correct (skipped): {result['contacts_already_correct']}")
+    print(f"Contacts already correct (skipped): {result['contacts_skipped']}")
 
-    if result.get("accounts_affected"):
-        print("\nAccounts with changes:")
-        for a in result["accounts_affected"]:
-            print(f"  • {a['account']} (value: {a['value_set']}) — {a['contacts_updated']} contact(s)")
+    if result.get("preview_examples"):
+        print("\nExamples of changes:")
+        for ex in result["preview_examples"]:
+            print(f"  • {ex['contact']} ({ex['account']}) — {ex['from']} → {ex['to']}")
 
     if result.get("error_details"):
         print(f"\nErrors ({result['errors']}):")
