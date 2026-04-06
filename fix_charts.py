@@ -2,72 +2,93 @@
 # fix_charts.py — Direct chart fix script (no agent needed)
 # Run this directly: python fix_charts.py
 # ============================================================
-# This script finds all pipeline/stage charts on the opportunity
-# entity and changes the Y-axis from Count to Sum of Revenue.
+# Finds pipeline/revenue charts and changes Y-axis from Count
+# to Sum of estimatedvalue (revenue). Skips count-by-design
+# charts and handles errors gracefully.
 # ============================================================
 
 import os
 from dotenv import load_dotenv
 load_dotenv()
 
-from tools.charts import list_charts, search_charts, get_chart_xml, set_chart_y_axis_to_sum
+from tools.charts import list_charts, get_chart_xml, set_chart_y_axis_to_sum
+
+# Charts whose names contain these words are REVENUE charts that should be fixed
+FIX_KEYWORDS = ['pipeline', 'revenue', 'close month']
+
+# Charts whose names contain these words should be SKIPPED (they're count-by-design)
+SKIP_KEYWORDS = ['count', 'won vs', 'leaderboard', 'by account', 'by rating',
+                 'by status', 'by campaign', 'by territory', 'by tyr type',
+                 'by fiscal', 'by month', 'progress', 'top ']
+
+def should_fix(name):
+    name_lower = name.lower()
+    if any(kw in name_lower for kw in SKIP_KEYWORDS):
+        return False
+    return any(kw in name_lower for kw in FIX_KEYWORDS)
 
 def run():
     print("\n=== TYR Sport — Pipeline Chart Fix ===\n")
 
-    # Step 1: List all opportunity charts
     print("Fetching all opportunity charts...")
     result = list_charts("opportunity")
     charts = result.get("charts", [])
     print(f"Found {len(charts)} charts total.\n")
 
-    # Step 2: Show all charts so you can see what's there
-    for c in charts:
-        print(f"  • {c['name']}  (id: {c['id']})")
+    targets = [c for c in charts if should_fix(c['name'])]
 
-    # Step 3: Find pipeline/stage charts
-    print("\n--- Searching for pipeline charts to fix ---\n")
-    targets = [c for c in charts if any(
-        kw in c['name'].lower()
-        for kw in ['pipeline', 'stage', 'close month', 'owner']
-    )]
+    print(f"Charts selected for fixing ({len(targets)}):")
+    for c in targets:
+        print(f"  • {c['name']}")
 
-    if not targets:
-        print("No pipeline/stage charts found by keyword. Checking all charts for count aggregation...\n")
-        targets = charts  # Try all of them
+    print()
 
     fixed = []
     skipped = []
+    errors = []
 
     for chart in targets:
         cid  = chart['id']
         name = chart['name']
         print(f"Checking: {name}")
 
-        xml_data = get_chart_xml(cid)
-        xml = xml_data.get("data_description_xml", "")
+        try:
+            xml_data = get_chart_xml(cid)
+            xml = xml_data.get("data_description_xml", "")
 
-        if 'aggregate="count"' in xml.lower() or "aggregate='count'" in xml.lower():
-            print(f"  → Count found. Fixing to Sum of estimatedvalue...")
-            fix_result = set_chart_y_axis_to_sum(cid, "estimatedvalue")
-            if fix_result.get("updated"):
-                print(f"  ✓ Fixed: {name}")
-                fixed.append(name)
+            if 'aggregate="count"' in xml.lower() or "aggregate='count'" in xml.lower():
+                print(f"  → Count aggregation found. Fixing to Sum of estimatedvalue...")
+                fix_result = set_chart_y_axis_to_sum(cid, "estimatedvalue")
+                if fix_result.get("updated"):
+                    print(f"  ✓ Fixed!")
+                    fixed.append(name)
+                else:
+                    msg = fix_result.get("message", str(fix_result))
+                    print(f"  — {msg}")
+                    skipped.append(f"{name}: {msg}")
             else:
-                print(f"  ✗ Fix failed: {fix_result}")
+                print(f"  — Already using sum. Skipping.")
                 skipped.append(name)
-        else:
-            print(f"  — Already using sum or no count aggregation found. Skipping.")
-            skipped.append(name)
+
+        except Exception as e:
+            print(f"  ✗ Error: {e}")
+            errors.append(f"{name}: {e}")
 
     print("\n=== Summary ===")
-    print(f"Fixed ({len(fixed)}):")
-    for n in fixed:
-        print(f"  ✓ {n}")
-    print(f"\nSkipped ({len(skipped)}):")
-    for n in skipped:
-        print(f"  — {n}")
-    print("\nDone. Refresh your CRM charts to see the changes.")
+    if fixed:
+        print(f"\nFixed ({len(fixed)}):")
+        for n in fixed:
+            print(f"  ✓ {n}")
+    if skipped:
+        print(f"\nSkipped ({len(skipped)}):")
+        for n in skipped:
+            print(f"  — {n}")
+    if errors:
+        print(f"\nErrors ({len(errors)}):")
+        for n in errors:
+            print(f"  ✗ {n}")
+
+    print("\nDone. Refresh your CRM dashboard to see the changes.")
 
 if __name__ == "__main__":
     run()
