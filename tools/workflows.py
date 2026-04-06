@@ -444,3 +444,73 @@ def clone_workflow(workflow_id: str, new_name: str) -> dict:
         "status": "Draft — activate it when ready",
         "message": f"Workflow cloned as '{new_name}'. It is in Draft status.",
     }
+
+
+def get_workflow_full_xaml(workflow_id: str) -> dict:
+    """
+    Get the complete XAML definition of a workflow (no truncation).
+
+    workflow_id: the unique ID of the workflow
+
+    Returns the full XAML so it can be inspected or updated.
+    """
+    result = crm_get(f"workflows({workflow_id})", {
+        "$select": "workflowid,name,xaml,primaryentity,triggeronupdateattributelist,triggeroncreate,triggerondelete,statecode,statuscode",
+    })
+
+    return {
+        "id":              result.get("workflowid"),
+        "name":            result.get("name", ""),
+        "entity":          result.get("primaryentity", ""),
+        "status":          "Active" if result.get("statecode") == 1 else "Draft/Inactive",
+        "trigger_create":  result.get("triggeroncreate", False),
+        "trigger_delete":  result.get("triggerondelete", False),
+        "trigger_fields":  result.get("triggeronupdateattributelist", ""),
+        "xaml":            result.get("xaml", ""),
+    }
+
+
+def update_workflow(
+    workflow_id: str,
+    xaml: str = None,
+    trigger_on_create: bool = None,
+    trigger_on_update_fields: str = None,
+    name: str = None,
+    description: str = None,
+) -> dict:
+    """
+    Update a workflow's XAML definition and/or trigger settings.
+    The workflow must be in Draft status to be updated.
+
+    workflow_id:               the unique ID of the workflow to update
+    xaml:                      new XAML definition (full XML string)
+    trigger_on_create:         True to trigger when a new record is created
+    trigger_on_update_fields:  comma-separated field names that trigger the workflow on update
+    name:                      new name for the workflow
+    description:               new description
+
+    Returns confirmation of what was updated.
+    """
+    data = {}
+    if xaml is not None:
+        data["xaml"] = xaml
+    if trigger_on_create is not None:
+        data["triggeroncreate"] = trigger_on_create
+    if trigger_on_update_fields is not None:
+        data["triggeronupdateattributelist"] = trigger_on_update_fields
+    if name is not None:
+        data["name"] = name
+    if description is not None:
+        data["description"] = description
+
+    if not data:
+        return {"error": "No updates specified — provide at least one parameter."}
+
+    crm_patch("workflows", workflow_id, data)
+
+    return {
+        "success":    True,
+        "workflow_id": workflow_id,
+        "fields_updated": list(data.keys()),
+        "message": "Workflow updated. Activate it when ready.",
+    }

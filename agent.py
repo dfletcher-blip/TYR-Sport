@@ -40,6 +40,13 @@ from tools.workflows import (
     get_workflows_by_entity,
     retry_failed_workflow_runs,
     clone_workflow,
+    get_workflow_full_xaml,
+    update_workflow,
+)
+from tools.sync import (
+    sync_contact_field_from_account,
+    get_contacts_with_mismatched_account_field,
+    sync_all_crossfit_contacts,
 )
 from tools.memory import update_crm_memory, read_crm_memory, save_session_summary, get_conversation_history
 from tools.views_dashboards import (
@@ -205,6 +212,8 @@ YOUR CAPABILITIES:
 16. AUDIT LOG — See who changed what and when on any record, find recently deleted records, view all changes in the last N hours, check audit status
 17. CLOUD FLOWS (Power Automate) — List, search, enable/disable, and check health of modern Power Automate flows; compare with classic workflows
 18. SECURITY — List security roles, view user permissions, assign/remove roles, find users with no roles, review admin access
+19. SYNC — Copy field values from parent Accounts to linked Contacts (e.g. sync tyr_tyrtype from Account → Contact). Tools: sync_contact_field_from_account, sync_all_crossfit_contacts, get_contacts_with_mismatched_account_field. Always offer dry_run first.
+20. WORKFLOW XAML — Read and update the full XAML of a classic workflow using get_workflow_full_xaml and update_workflow. Deactivate the workflow first before editing.
 
 HOW YOU WORK:
 - Always start by READING data before making any changes
@@ -271,6 +280,13 @@ TOOL_REGISTRY = {
     "get_workflows_by_entity":     get_workflows_by_entity,
     "retry_failed_workflow_runs":  retry_failed_workflow_runs,
     "clone_workflow":              clone_workflow,
+    "get_workflow_full_xaml":      get_workflow_full_xaml,
+    "update_workflow":             update_workflow,
+
+    # Sync tools
+    "sync_contact_field_from_account":           sync_contact_field_from_account,
+    "get_contacts_with_mismatched_account_field": get_contacts_with_mismatched_account_field,
+    "sync_all_crossfit_contacts":                sync_all_crossfit_contacts,
 
     # Views & dashboard tools
     "list_views":                  list_views,
@@ -665,6 +681,67 @@ TOOL_DEFINITIONS = [
                 "new_name": {"type": "string", "description": "Name for the cloned workflow"},
             },
             "required": ["workflow_id", "new_name"],
+        },
+    },
+    {
+        "name": "get_workflow_full_xaml",
+        "description": "Get the complete XAML definition of a workflow (untruncated). Use this to inspect or prepare to update a workflow's logic.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string", "description": "The GUID of the workflow"},
+            },
+            "required": ["workflow_id"],
+        },
+    },
+    {
+        "name": "update_workflow",
+        "description": "Update a workflow's XAML definition and/or trigger settings. Workflow must be in Draft status first (deactivate it before editing).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "workflow_id":               {"type": "string", "description": "The GUID of the workflow to update"},
+                "xaml":                      {"type": "string", "description": "New full XAML definition"},
+                "trigger_on_create":         {"type": "boolean", "description": "True to fire when a new record is created"},
+                "trigger_on_update_fields":  {"type": "string", "description": "Comma-separated field names that trigger the workflow on update, e.g. 'parentcustomerid,tyr_tyrtype'"},
+                "name":                      {"type": "string", "description": "New name for the workflow"},
+                "description":               {"type": "string", "description": "New description"},
+            },
+            "required": ["workflow_id"],
+        },
+    },
+    {
+        "name": "sync_contact_field_from_account",
+        "description": "Copy a field value from each Account to all Contacts linked to that Account. Use this to sync tyr_tyrtype (or any field) from Accounts down to their Contacts. Supports dry_run to preview changes.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "account_field": {"type": "string", "description": "Field name on Account to read from (default: tyr_tyrtype)"},
+                "contact_field": {"type": "string", "description": "Field name on Contact to write to (default: tyr_tyrtype)"},
+                "dry_run":       {"type": "boolean", "description": "If true, preview what would change without actually updating"},
+            },
+        },
+    },
+    {
+        "name": "get_contacts_with_mismatched_account_field",
+        "description": "Find contacts where a field value does NOT match their parent account's value. Use this to audit sync status before or after running sync_contact_field_from_account.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "account_field": {"type": "string", "description": "Field name on Account (default: tyr_tyrtype)"},
+                "contact_field": {"type": "string", "description": "Field name on Contact (default: tyr_tyrtype)"},
+                "limit":         {"type": "integer", "description": "Max mismatches to return (default 200)"},
+            },
+        },
+    },
+    {
+        "name": "sync_all_crossfit_contacts",
+        "description": "Convenience: sync tyr_tyrtype from all Accounts to their linked Contacts. Supports dry_run to preview first.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "dry_run": {"type": "boolean", "description": "If true, preview what would change without actually updating"},
+            },
         },
     },
     {
