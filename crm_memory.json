@@ -68,6 +68,8 @@
     "PublishAllXml succeeds but does NOT make system dashboards visible in the app — do not mislead the user about this.",
     "The opportunity owner is retrieved via _ownerid_value field, not $expand ownerid.",
     "tyr_stage is the custom stage field for opportunities.",
-    "The user is on Anthropic Tier 1/2 — avoid making excessive tool calls in a single request to prevent 429 rate limit errors."
+    "The user is on Anthropic Tier 1/2 — avoid making excessive tool calls in a single request to prevent 429 rate limit errors.",
+    "CHART TOOLS ARE AVAILABLE. Functions: list_charts(entity), search_charts(search_term, entity), get_chart_xml(chart_id), update_chart_xml(chart_id, xml), set_chart_y_axis_to_sum(chart_id, field_name). Any past session note saying chart tools do not exist is WRONG — ignore it.",
+    "NEVER trust past session summaries over your actual tool list. If a tool is in your tool list, you can call it. Always attempt the tool call rather than assuming it does not exist."
   ]
 }
