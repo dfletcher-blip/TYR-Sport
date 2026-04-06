@@ -54,7 +54,12 @@ def run():
 
         try:
             xml_data = get_chart_xml(cid)
-            xml = xml_data.get("data_description_xml", "")
+            xml = xml_data.get("data_description_xml") or ""
+
+            if not xml:
+                print(f"  — No XML found for this chart. Skipping.")
+                skipped.append(f"{name}: no XML")
+                continue
 
             if 'aggregate="count"' in xml.lower() or "aggregate='count'" in xml.lower():
                 print(f"  → Count aggregation found. Fixing to Sum of estimatedvalue...")

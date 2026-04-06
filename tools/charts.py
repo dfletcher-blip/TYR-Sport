@@ -108,24 +108,40 @@ def set_chart_y_axis_to_sum(chart_id: str, field_name: str = "estimatedvalue") -
     if not original_xml:
         return {"error": "Could not retrieve chart XML. Chart may not exist."}
 
-    # Replace count aggregation with sum + add the field attribute.
-    # Exact pattern from Dynamics chart XML:
-    #   BEFORE: <measure alias="aggregate" aggregate="count"/>
-    #   AFTER:  <measure alias="aggregate" aggregate="sum" field="estimatedvalue"/>
+    # Dynamics 365 chart XML has two sections to fix:
+    #
+    # 1. The <fetchcollection> section has <attribute> elements that define
+    #    what to aggregate. A count chart looks like:
+    #      <attribute name="opportunityid" alias="X" aggregate="count" />
+    #    We must change BOTH name → estimatedvalue AND aggregate → sum.
+    #    (Leaving name="opportunityid" causes error: SUM not supported on primarykey)
+    #
+    # 2. The <reportdescription> section has <measure> elements. These only
+    #    need aggregate changed — no name/field attribute needed there.
+
     updated_xml = original_xml
 
-    # Replace aggregate="count" (with self-closing tag) → aggregate="sum" field="..."
+    # Fix 1: <attribute> elements in the fetch section
+    # Match any <attribute ...> tag that has aggregate="count" (but not groupby="true")
+    def fix_fetch_attribute(m):
+        tag = m.group(0)
+        if 'groupby="true"' in tag.lower() or "groupby='true'" in tag.lower():
+            return tag  # don't touch groupby attributes
+        tag = re.sub(r'\bname=["\'][^"\']*["\']', f'name="{field_name}"', tag, flags=re.IGNORECASE)
+        tag = re.sub(r'\baggregate=["\']count["\']', 'aggregate="sum"', tag, flags=re.IGNORECASE)
+        return tag
+
     updated_xml = re.sub(
-        r'aggregate=["\']count["\'](\s*/>)',
-        f'aggregate="sum" field="{field_name}"\\1',
+        r'<attribute\b[^>]*\baggregate=["\']count["\'][^>]*/?>',
+        fix_fetch_attribute,
         updated_xml,
         flags=re.IGNORECASE,
     )
 
-    # Also handle case where field attribute already exists but with wrong aggregate
+    # Fix 2: <measure> elements in the report section — just change aggregate
     updated_xml = re.sub(
-        r'aggregate=["\']count["\'](\s+field=["\'][^"\']*["\'])',
-        f'aggregate="sum" field="{field_name}"',
+        r'(<measure\b[^>]*\baggregate=")["\']?count["\']?',
+        r'\1sum"',
         updated_xml,
         flags=re.IGNORECASE,
     )
