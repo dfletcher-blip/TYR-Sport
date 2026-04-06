@@ -22,98 +22,72 @@ def sync_contact_field_from_account(
 ) -> dict:
     """
     Copy a field value from each Account to all Contacts linked to that Account.
+    Uses a single bulk query (expand) instead of one call per account.
 
     account_field: field name on the Account entity to read from (default: tyr_tyrtype)
     contact_field: field name on the Contact entity to write to (default: tyr_tyrtype)
     dry_run:       if True, show what WOULD be updated without actually updating
-
-    Returns a summary of how many contacts were updated and any errors.
     """
-    # Step 1: Get all accounts that have a value in the source field
+    # Single query: get all contacts + their parent account's field value in one call
     params = {
-        "$select": f"accountid,name,{account_field}",
-        "$filter": f"{account_field} ne null",
+        "$select": f"contactid,fullname,{contact_field},_parentcustomerid_value",
+        "$expand": f"parentcustomerid_account($select=accountid,name,{account_field})",
+        "$filter": f"_parentcustomerid_value ne null",
         "$top": 5000,
-        "$orderby": "name asc",
     }
 
-    accounts = crm_get("accounts", params).get("value", [])
+    contacts = crm_get("contacts", params).get("value", [])
 
-    if not accounts:
-        return {
-            "message": f"No accounts found with '{account_field}' set.",
-            "accounts_checked": 0,
-            "contacts_updated": 0,
-        }
+    if not contacts:
+        return {"message": "No contacts with a parent account found.", "contacts_updated": 0}
 
     updated = 0
     skipped = 0
     errors = []
-    account_summaries = []
+    examples = []
 
-    for account in accounts:
-        account_id   = account.get("accountid")
-        account_name = account.get("name", "Unnamed")
-        field_value  = account.get(account_field)
+    for contact in contacts:
+        contact_id    = contact.get("contactid")
+        contact_name  = contact.get("fullname", "Unknown")
+        contact_val   = contact.get(contact_field)
+        account_data  = contact.get("parentcustomerid_account") or {}
+        account_val   = account_data.get(account_field)
 
-        if field_value is None:
+        if account_val is None:
+            skipped += 1
             continue
 
-        # Step 2: Get all contacts linked to this account
-        contact_params = {
-            "$select": f"contactid,fullname,{contact_field}",
-            "$filter": f"_parentcustomerid_value eq {account_id}",
-            "$top": 1000,
-        }
-
-        try:
-            contacts = crm_get("contacts", contact_params).get("value", [])
-        except Exception as e:
-            errors.append(f"Error fetching contacts for {account_name}: {e}")
+        if contact_val == account_val:
+            skipped += 1
             continue
 
-        if not contacts:
-            continue
-
-        contacts_updated_this_account = 0
-        for contact in contacts:
-            contact_id    = contact.get("contactid")
-            contact_name  = contact.get("fullname", "Unknown")
-            current_value = contact.get(contact_field)
-
-            if current_value == field_value:
-                skipped += 1
-                continue
-
-            if not dry_run:
-                try:
-                    crm_patch("contacts", contact_id, {contact_field: field_value})
-                    updated += 1
-                    contacts_updated_this_account += 1
-                except Exception as e:
-                    errors.append(f"Error updating {contact_name}: {e}")
-            else:
-                updated += 1  # Count as "would update" in dry run
-                contacts_updated_this_account += 1
-
-        if contacts_updated_this_account > 0:
-            account_summaries.append({
-                "account": account_name,
-                "value_set": field_value,
-                "contacts_updated": contacts_updated_this_account,
-            })
+        if not dry_run:
+            try:
+                crm_patch("contacts", contact_id, {contact_field: account_val})
+                updated += 1
+            except Exception as e:
+                errors.append(f"{contact_name}: {e}")
+        else:
+            updated += 1
+            if len(examples) < 10:
+                examples.append({
+                    "contact": contact_name,
+                    "account": account_data.get("name", ""),
+                    "from":    contact_val,
+                    "to":      account_val,
+                })
 
     return {
-        "dry_run": dry_run,
-        "accounts_with_field_set": len(accounts),
-        "contacts_updated": updated,
-        "contacts_already_correct": skipped,
-        "errors": len(errors),
-        "error_details": errors[:10],
-        "accounts_affected": account_summaries[:20],
+        "dry_run":              dry_run,
+        "total_contacts_checked": len(contacts),
+        "contacts_updated":     updated,
+        "contacts_skipped":     skipped,
+        "errors":               len(errors),
+        "error_details":        errors[:10],
+        "preview_examples":     examples,
         "message": (
             f"{'DRY RUN — no changes made. ' if dry_run else ''}"
-            f"Updated {updated} contacts across {len(account_summaries)} accounts."
+            f"{updated} contacts {'would be' if dry_run else 'were'} updated."
         ),
     }
 
@@ -125,60 +99,44 @@ def get_contacts_with_mismatched_account_field(
 ) -> dict:
     """
     Find contacts where the field value does NOT match their parent account's value.
-    Useful for auditing before or after a sync.
-
-    account_field: field name on Account (default: tyr_tyrtype)
-    contact_field: field name on Contact (default: tyr_tyrtype)
-    limit:         max number of mismatches to return (default 200)
-
-    Returns a list of contacts where the values are out of sync.
+    Uses a single bulk query for speed.
     """
-    # Get accounts with the field set
-    accounts = crm_get("accounts", {
-        "$select": f"accountid,name,{account_field}",
-        "$filter": f"{account_field} ne null",
+    params = {
+        "$select": f"contactid,fullname,emailaddress1,{contact_field},_parentcustomerid_value",
+        "$expand": f"parentcustomerid_account($select=accountid,name,{account_field})",
+        "$filter": "_parentcustomerid_value ne null",
         "$top": 5000,
-    }).get("value", [])
+    }
 
-    account_map = {a["accountid"]: a for a in accounts}
+    contacts = crm_get("contacts", params).get("value", [])
 
     mismatches = []
+    for contact in contacts:
+        contact_val  = contact.get(contact_field)
+        account_data = contact.get("parentcustomerid_account") or {}
+        account_val  = account_data.get(account_field)
 
-    for account in accounts:
-        account_id   = account.get("accountid")
-        account_name = account.get("name", "Unnamed")
-        account_val  = account.get(account_field)
+        if account_val is None:
+            continue
 
-        contacts = crm_get("contacts", {
-            "$select": f"contactid,fullname,emailaddress1,{contact_field}",
-            "$filter": f"_parentcustomerid_value eq {account_id}",
-            "$top": 1000,
-        }).get("value", [])
-
-        for contact in contacts:
-            contact_val = contact.get(contact_field)
-            if contact_val != account_val:
-                mismatches.append({
-                    "contact_name":  contact.get("fullname", "Unknown"),
-                    "contact_id":    contact.get("contactid"),
-                    "email":         contact.get("emailaddress1", ""),
-                    "account_name":  account_name,
-                    "account_value": account_val,
-                    "contact_value": contact_val,
-                })
-
-        if len(mismatches) >= limit:
-            break
+        if contact_val != account_val:
+            mismatches.append({
+                "contact_name":  contact.get("fullname", "Unknown"),
+                "contact_id":    contact.get("contactid"),
+                "email":         contact.get("emailaddress1", ""),
+                "account_name":  account_data.get("name", ""),
+                "account_value": account_val,
+                "contact_value": contact_val,
+            })
+            if len(mismatches) >= limit:
+                break
 
     return {
         "total_mismatches_found": len(mismatches),
         "account_field": account_field,
         "contact_field": contact_field,
-        "mismatches": mismatches[:limit],
-        "message": (
-            f"Found {len(mismatches)} contacts where {contact_field} "
-            f"does not match their account's {account_field}."
-        ),
+        "mismatches": mismatches,
+        "message": f"Found {len(mismatches)} contacts out of sync.",
     }
 
 
