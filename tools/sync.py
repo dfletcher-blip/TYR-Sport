@@ -71,6 +71,8 @@ def sync_contact_field_from_account(
             try:
                 crm_patch("contacts", contact_id, {contact_field: account_val})
                 updated += 1
+                if updated % 100 == 0:
+                    print(f"  ... {updated} contacts updated so far")
             except Exception as e:
                 errors.append(f"{contact_name}: {e}")
         else:

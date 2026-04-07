@@ -22,15 +22,7 @@ def run():
     if dry_run:
         print("** DRY RUN MODE — no changes will be made **\n")
 
-    print("Checking for mismatches first...\n")
-    audit = get_contacts_with_mismatched_account_field("tyr_tyrtype", "tyr_tyrtype", limit=5)
-    print(f"Contacts out of sync: {audit['total_mismatches_found']}")
-    if audit["mismatches"]:
-        print("Examples:")
-        for m in audit["mismatches"][:5]:
-            print(f"  • {m['contact_name']} ({m['account_name']}) — contact has {m['contact_value']}, account has {m['account_value']}")
-
-    print(f"\n{'Previewing' if dry_run else 'Running'} sync...\n")
+    print(f"{'Previewing' if dry_run else 'Running'} sync (this may take a few minutes for large contact lists)...\n")
     result = sync_contact_field_from_account("tyr_tyrtype", "tyr_tyrtype", dry_run=dry_run)
 
     print(f"Contacts checked: {result['total_contacts_checked']}")
