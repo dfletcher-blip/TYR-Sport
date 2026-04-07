@@ -42,10 +42,12 @@ def run():
         for ex in result["preview_examples"]:
             print(f"  • {ex['contact']} ({ex['account']}) — {ex['from']} → {ex['to']}")
 
-    if result.get("error_details"):
-        print(f"\nErrors ({result['errors']}):")
-        for e in result["error_details"]:
+    if result.get("error_details") or result.get("errors"):
+        print(f"\nErrors ({result['errors']}) — likely option values missing from Contact field:")
+        for e in result["error_details"][:5]:
             print(f"  ✗ {e}")
+        if result["errors"] > 5:
+            print(f"  ... and {result['errors'] - 5} more. Add missing option values to the Contact TYR Type field in CRM customizations.")
 
     if dry_run:
         print("\nRun without --dry-run to apply these changes:")

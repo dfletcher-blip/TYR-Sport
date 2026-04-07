@@ -57,6 +57,12 @@ def sync_contact_field_from_account(
             skipped += 1
             continue
 
+        # Handle multi-select: account may have comma-separated values (e.g. "935650002,935650015")
+        # Contact field is single-select — take the first value only
+        account_val_str = str(account_val)
+        if "," in account_val_str:
+            account_val = int(account_val_str.split(",")[0].strip())
+
         if contact_val == account_val:
             skipped += 1
             continue
