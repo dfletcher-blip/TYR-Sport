@@ -7,7 +7,7 @@
 # These tools let Claude create, list, and manage both.
 # ============================================================
 
-import sys, os, json, html
+import sys, os, json, html, uuid
 from dotenv import load_dotenv
 load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -170,28 +170,64 @@ def create_contact_view(
 
 def list_dashboards() -> dict:
     """
-    List all dashboards available in the CRM.
+    List all dashboards available in the CRM — both system dashboards and
+    the personal dashboards owned by the configured user.
 
     Returns all dashboards with their names and types.
     """
-    params = {
+    formatted = []
+
+    # System dashboards
+    sys_result = crm_get("systemforms", {
         "$top": 100,
         "$select": "formid,name,description,formactivationstate",
-        "$filter": "type eq 0",  # 0 = Dashboard form type
+        "$filter": "type eq 0",
         "$orderby": "name asc",
-    }
-
-    result = crm_get("systemforms", params)
-    dashboards = result.get("value", [])
-
-    formatted = []
-    for d in dashboards:
+    })
+    for d in sys_result.get("value", []):
         formatted.append({
             "id": d.get("formid"),
             "name": d.get("name", "Unnamed Dashboard"),
             "description": d.get("description", ""),
             "status": "Active" if d.get("formactivationstate") == 1 else "Inactive",
+            "type": "system",
         })
+
+    # Personal dashboards — query as the configured user via impersonation
+    user_email = os.getenv("DYNAMICS_USER_EMAIL", "")
+    owner_id = None
+    if user_email:
+        try:
+            owner_id = _get_user_id(user_email)
+        except Exception:
+            pass
+
+    if owner_id:
+        try:
+            token = get_access_token()
+            usr_headers = {
+                "Authorization": f"Bearer {token}",
+                "OData-MaxVersion": "4.0",
+                "OData-Version": "4.0",
+                "Accept": "application/json",
+                "MSCRMCallerID": owner_id,
+            }
+            resp = _requests.get(
+                f"{DYNAMICS_URL}/api/data/v9.2/userforms",
+                headers=usr_headers,
+                params={"$top": 50, "$select": "userformid,name,description", "$filter": "type eq 0", "$orderby": "name asc"},
+            )
+            if resp.ok:
+                for d in resp.json().get("value", []):
+                    formatted.append({
+                        "id": d.get("userformid"),
+                        "name": d.get("name", "Unnamed Dashboard"),
+                        "description": d.get("description", ""),
+                        "status": "Active",
+                        "type": "personal",
+                    })
+        except Exception:
+            pass
 
     return {
         "total_dashboards": len(formatted),
@@ -275,12 +311,13 @@ def _build_component_xml(i: int, comp: dict) -> str:
         chart_id = _get_chart_id(entity, comp.get("chart_name", ""))
 
     grid_mode = "Chart" if (comp_type == "chart" and chart_id) else "Grid"
-    enable_chart_picker = "true" if comp_type == "chart" else "false"
+    enable_chart_picker = "true" if (comp_type == "chart" and chart_id) else "false"
     enable_quick_find = "false" if comp_type == "chart" else "true"
+    viz_tag = f"<VisualizationId>{{{chart_id}}}</VisualizationId>" if chart_id else "<VisualizationId/>"
 
     return f"""<cell showlabel="true" locklevel="0">
   <labels><label description="{safe_title}" languagecode="1033"/></labels>
-  <control id="control{i}" classid="{{E7A81278-8635-4d9e-8D4D-59480B391C5B}}" isrequired="false">
+  <control id="Cust_ListViewControl_{i}" classid="{{E7A81278-8635-4d9e-8D4D-59480B391C5B}}" isrequired="false">
     <parameters>
       <ViewId>{{{view_id}}}</ViewId>
       <IsUserView>false</IsUserView>
@@ -291,7 +328,7 @@ def _build_component_xml(i: int, comp: dict) -> str:
       <EnableViewPicker>true</EnableViewPicker>
       <EnableJumpBar>false</EnableJumpBar>
       <ChartGridMode>{grid_mode}</ChartGridMode>
-      <VisualizationId>{("{" + chart_id + "}") if chart_id else ""}</VisualizationId>
+      {viz_tag}
       <EnableChartPicker>{enable_chart_picker}</EnableChartPicker>
       <RecordsPerPage>6</RecordsPerPage>
     </parameters>
@@ -318,8 +355,8 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
     """
     if components is None:
         components = [
-            {"type": "list",  "title": "Recent Contacts",       "entity": "contact",     "view_name": "Active Contacts"},
-            {"type": "chart", "title": "Contacts by Status",     "entity": "contact",     "view_name": "Active Contacts"},
+            {"type": "list",  "title": "Open Opportunities",  "entity": "opportunity", "view_name": "Open Opportunities"},
+            {"type": "chart", "title": "Pipeline by Stage",   "entity": "opportunity", "view_name": "Open Opportunities", "chart_name": "Relationship Pipeline"},
         ]
 
     # Look up the dashboard owner from .env
@@ -331,46 +368,53 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
         except Exception:
             owner_id = None
 
-    # Build form XML with real view/chart references
+    # Build component cells, splitting evenly into left and right columns
     safe_name = html.escape(name)
-    rows_xml = ""
-    built = 0
-    for i, comp in enumerate(components[:6]):
-        cell_xml = _build_component_xml(i, comp)
+    left_cells = []
+    right_cells = []
+    ctrl_idx = 0
+    for comp in components[:6]:
+        cell_xml = _build_component_xml(ctrl_idx, comp)
         if not cell_xml:
             continue
-        col = built % 2
-        if col == 0:
-            rows_xml += "<row>"
-        rows_xml += cell_xml
-        built += 1
-        if col == 1 or i == len(components) - 1:
-            rows_xml += "</row>"
+        if len(left_cells) <= len(right_cells):
+            left_cells.append(cell_xml)
+        else:
+            right_cells.append(cell_xml)
+        ctrl_idx += 1
 
-    if not rows_xml:
+    if not left_cells and not right_cells:
         return {"success": False, "error": "Could not find any views for the requested components. Check entity names and view names."}
 
-    # Pad to even number of cells if needed
-    if built % 2 == 1:
-        rows_xml += "<cell showlabel='false' locklevel='0'><labels><label description='' languagecode='1033'/></labels></cell></row>"
+    def _col_xml(cells, section_name, section_id):
+        rows = "".join(f"<row>{c}</row>" for c in cells)
+        return (
+            f'<column width="50%">'
+            f'<sections>'
+            f'<section name="{section_name}" showlabel="false" showbar="false" locklevel="0"'
+            f' id="{{{section_id}}}" columns="1">'
+            f'<labels><label description="" languagecode="1033"/></labels>'
+            f'<rows>{rows}</rows>'
+            f'</section>'
+            f'</sections>'
+            f'</column>'
+        )
 
-    form_xml = f"""<form>
-  <tabs>
-    <tab name="tab_0" id="{{c58ee3c2-79ba-4bcc-8dd7-b6ef3b4b6456}}" locklevel="0" showlabel="false" expanded="true">
-      <labels><label description="{safe_name}" languagecode="1033"/></labels>
-      <columns>
-        <column width="100%">
-          <sections>
-            <section name="section_0" showlabel="false" showbar="false" locklevel="0" id="{{0e9dd3f4-98e0-4536-a3c9-56b5e38a8b4a}}" layout="varwidth" columns="2">
-              <labels><label description="Section" languagecode="1033"/></labels>
-              <rows>{rows_xml}</rows>
-            </section>
-          </sections>
-        </column>
-      </columns>
-    </tab>
-  </tabs>
-</form>"""
+    tab_id       = str(uuid.uuid4())
+    left_sec_id  = str(uuid.uuid4())
+    right_sec_id = str(uuid.uuid4())
+
+    form_xml = (
+        f'<form><tabs>'
+        f'<tab name="tab_0" id="{{{tab_id}}}" locklevel="0" showlabel="false" expanded="true">'
+        f'<labels><label description="{safe_name}" languagecode="1033"/></labels>'
+        f'<columns>'
+        f'{_col_xml(left_cells,  "section_0", left_sec_id)}'
+        f'{_col_xml(right_cells, "section_1", right_sec_id)}'
+        f'</columns>'
+        f'</tab>'
+        f'</tabs></form>'
+    )
 
     dashboard_data = {
         "name": name,
@@ -404,13 +448,14 @@ def create_dashboard(name: str, description: str, components: list = None) -> di
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+    total_built = len(left_cells) + len(right_cells)
     return {
         "success": True,
         "dashboard_name": name,
         "description": description,
-        "components_added": built,
+        "components_added": total_built,
         "owner": user_email or "service account",
-        "message": f"Dashboard '{name}' created with {built} component(s). Refresh your CRM and look under My Dashboards.",
+        "message": f"Dashboard '{name}' created with {total_built} component(s). Refresh your CRM and look under My Dashboards.",
     }
 
 
@@ -437,12 +482,31 @@ def delete_dashboard(name_or_id: str) -> dict:
     escaped = name_or_id.replace("'", "''")
 
     if guid_pattern.match(name_or_id):
-        params = {"$filter": f"userformid eq {name_or_id}", "$select": "userformid,name"}
+        filter_str = f"userformid eq {name_or_id}"
     else:
-        params = {"$filter": f"contains(name,'{escaped}')", "$select": "userformid,name"}
+        filter_str = f"contains(name,'{escaped}')"
 
-    result = crm_get("userforms", params)
-    dashboards = result.get("value", [])
+    # Query WITH impersonation so we can see the user's own dashboards
+    try:
+        token = get_access_token()
+        q_headers = {
+            "Authorization": f"Bearer {token}",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+            "Accept": "application/json",
+        }
+        if owner_id:
+            q_headers["MSCRMCallerID"] = owner_id
+        resp = _requests.get(
+            f"{DYNAMICS_URL}/api/data/v9.2/userforms",
+            headers=q_headers,
+            params={"$filter": filter_str, "$select": "userformid,name"},
+        )
+        if not resp.ok:
+            return {"success": False, "error": f"Query failed ({resp.status_code}): {resp.text[:300]}"}
+        dashboards = resp.json().get("value", [])
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
     if not dashboards:
         return {"success": False, "error": f"No personal dashboard found matching '{name_or_id}'."}
