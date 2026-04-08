@@ -58,6 +58,7 @@ for value, label in sorted(CORRECT_LABELS.items()):
         json={
             "OptionSetName": OPTION_SET_NAME,
             "Value": value,
+            "MergeLabels": False,
             "Label": {
                 "@odata.type": "Microsoft.Dynamics.CRM.Label",
                 "LocalizedLabels": [{
@@ -65,11 +66,6 @@ for value, label in sorted(CORRECT_LABELS.items()):
                     "Label": label,
                     "LanguageCode": 1033,
                 }],
-                "UserLocalizedLabel": {
-                    "@odata.type": "Microsoft.Dynamics.CRM.LocalizedLabel",
-                    "Label": label,
-                    "LanguageCode": 1033,
-                },
             },
             "SolutionUniqueName": "Default",
         },
@@ -79,22 +75,7 @@ for value, label in sorted(CORRECT_LABELS.items()):
     else:
         print(f"    FAILED - {resp.status_code}: {resp.text[:300]}")
 
-# ── Step 2: Delete incorrectly added 935650020 (Crossfit) ────
-print("\nRemoving incorrectly added value 935650020 (Crossfit)...")
-resp = requests.post(
-    f"{DYNAMICS_URL}/api/data/v9.2/DeleteOptionValue",
-    headers=get_headers(),
-    json={
-        "OptionSetName": OPTION_SET_NAME,
-        "Value": 935650020,
-    },
-)
-if resp.ok:
-    print("  OK - Removed 935650020")
-else:
-    print(f"  FAILED - {resp.status_code}: {resp.text[:300]}")
-
-# ── Step 3: Publish ───────────────────────────────────────────
+# ── Step 2: Publish ───────────────────────────────────────────
 print("\nPublishing Contact entity...")
 crm_action("PublishXml", {
     "ParameterXml": "<importexportxml><entities><entity>contact</entity></entities></importexportxml>"
