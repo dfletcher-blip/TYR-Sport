@@ -115,8 +115,8 @@ for i, acct in enumerate(crossfit_accounts):
             errors += 1
             print(f"  Network error patching {contact.get('fullname')}: {e}")
 
-    if (i + 1) % 100 == 0:
-        print(f"  {i+1}/{len(crossfit_accounts)} accounts processed — {updated} updated, {errors} errors")
+    if (i + 1) % 10 == 0:
+        print(f"  {i+1}/{len(crossfit_accounts)} accounts — {updated} updated, {already_correct} ok, {errors} errors")
 
 print(f"\nDone.")
 print(f"  Updated:         {updated}")
