@@ -31,6 +31,7 @@ def get_headers():
 
 def request_with_retry(method, url, **kwargs):
     """Make a request, retry up to 3 times on network errors or 401."""
+    kwargs.setdefault("timeout", 30)
     for attempt in range(4):
         try:
             resp = method(url, **kwargs)
