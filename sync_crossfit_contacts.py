@@ -1,8 +1,11 @@
 """
-Targeted sync: Set tyr_tyrtype = CrossFit (935650004) on all contacts
-whose parent account has CrossFit selected AND who currently have null tyr_tyrtype.
+Phase 2 sync: Update remaining null-tyr_tyrtype contacts whose parent account has CrossFit.
 
-Uses FetchXML (inner join) to get contacts efficiently, then batch PATCH.
+Strategy:
+  1. Get all CrossFit account IDs (simple filter on accounts)
+  2. Get all contacts with null tyr_tyrtype
+  3. Cross-reference in Python
+  4. Batch PATCH updates (50 per request)
 """
 import os, time, uuid, requests
 from dotenv import load_dotenv
@@ -17,7 +20,7 @@ _token_cache = {"token": None, "expires_at": 0}
 def get_token():
     now = time.time()
     if not _token_cache["token"] or now >= _token_cache["expires_at"]:
-        print("  Fetching auth token...")
+        print("  Refreshing auth token...")
         _token_cache["token"] = get_access_token()
         _token_cache["expires_at"] = now + 3000
     return _token_cache["token"]
@@ -34,86 +37,77 @@ def get_headers(extra=None):
         h.update(extra)
     return h
 
-# FetchXML: contacts with null tyr_tyrtype whose parent account has CrossFit
-FETCH_XML = """
-<fetch>
-  <entity name="contact">
-    <attribute name="contactid"/>
-    <attribute name="tyr_tyrtype"/>
-    <filter>
-      <condition attribute="tyr_tyrtype" operator="null"/>
-    </filter>
-    <link-entity name="account" from="accountid" to="parentcustomerid" link-type="inner">
-      <filter>
-        <condition attribute="tyr_tyrtype" operator="contain-values">
-          <value>935650004</value>
-        </condition>
-      </filter>
-    </link-entity>
-  </entity>
-</fetch>
-"""
+def paginate(label, url, params):
+    results = []
+    page = 1
+    while url:
+        print(f"  {label} page {page}...", end=" ", flush=True)
+        for attempt in range(4):
+            try:
+                resp = requests.get(url, headers=get_headers(), params=params, timeout=30)
+                break
+            except Exception as e:
+                if attempt == 3:
+                    raise
+                wait = 2 ** attempt
+                print(f"retry({e})...", end=" ", flush=True)
+                time.sleep(wait)
+        if not resp.ok:
+            raise Exception(f"HTTP {resp.status_code}: {resp.text[:200]}")
+        data = resp.json()
+        batch = data.get("value", [])
+        results.extend(batch)
+        print(f"{len(batch)} (total {len(results)})")
+        url = data.get("@odata.nextLink")
+        params = None
+        page += 1
+    return results
 
-# --- Step 1: Collect all matching contacts via FetchXML paging ---
-print("Step 1: Finding contacts with null tyr_tyrtype from CrossFit accounts...")
-all_contacts = []
-page = 1
-paging_cookie = None
+# --- Step 1: CrossFit account IDs ---
+print("Step 1: Getting CrossFit account IDs...")
+crossfit_accounts = paginate(
+    "accounts",
+    f"{DYNAMICS_URL}/api/data/v9.2/accounts",
+    {
+        "$select": "accountid",
+        "$filter": "Microsoft.Dynamics.CRM.ContainValues(PropertyName='tyr_tyrtype',PropertyValues=['935650004'])",
+        "$top": 1000,
+    },
+)
+crossfit_ids = {a["accountid"] for a in crossfit_accounts}
+print(f"  CrossFit account count: {len(crossfit_ids)}\n")
 
-while True:
-    fetch = FETCH_XML.strip()
-    # Insert paging attributes
-    if paging_cookie:
-        import xml.sax.saxutils as saxutils
-        cookie_escaped = saxutils.escape(paging_cookie)
-        fetch = fetch.replace(
-            "<fetch>",
-            f'<fetch page="{page}" paging-cookie="{cookie_escaped}">'
-        )
-    else:
-        fetch = fetch.replace("<fetch>", f'<fetch page="{page}" count="500">')
+# --- Step 2: Contacts with null tyr_tyrtype ---
+print("Step 2: Getting contacts with null tyr_tyrtype...")
+null_contacts = paginate(
+    "contacts",
+    f"{DYNAMICS_URL}/api/data/v9.2/contacts",
+    {
+        "$select": "contactid,_parentcustomerid_value",
+        "$filter": "tyr_tyrtype eq null",
+        "$top": 1000,
+    },
+)
+print(f"  Null-tyr_tyrtype contact count: {len(null_contacts)}\n")
 
-    print(f"  Page {page}...", end=" ", flush=True)
-    resp = requests.get(
-        f"{DYNAMICS_URL}/api/data/v9.2/contacts",
-        headers=get_headers({"Prefer": "odata.include-annotations=Microsoft.Dynamics.CRM.fetchxmlpagingcookie"}),
-        params={"fetchXml": fetch},
-        timeout=60,
-    )
+# --- Step 3: Cross-reference ---
+to_update = [c for c in null_contacts if c.get("_parentcustomerid_value") in crossfit_ids]
+skipped = len(null_contacts) - len(to_update)
+print(f"Step 3: {len(to_update)} contacts need CrossFit value ({skipped} skipped - no CrossFit parent)\n")
 
-    if not resp.ok:
-        print(f"\nFAILED: {resp.status_code} {resp.text[:500]}")
-        exit(1)
-
-    data = resp.json()
-    batch = data.get("value", [])
-    all_contacts.extend(batch)
-    print(f"{len(batch)} contacts (total: {len(all_contacts)})")
-
-    # Check for next page
-    paging_annotation = data.get("@Microsoft.Dynamics.CRM.fetchxmlpagingcookie")
-    if not paging_annotation or len(batch) == 0:
-        break
-
-    # Extract raw cookie from annotation
-    import urllib.parse
-    paging_cookie = urllib.parse.unquote(paging_annotation)
-    page += 1
-
-print(f"\nContacts to update: {len(all_contacts)}")
-if not all_contacts:
+if not to_update:
     print("Nothing to update!")
     exit(0)
 
-# --- Step 2: Batch PATCH (50 per request) ---
-print("\nStep 2: Updating via batch API...")
+# --- Step 4: Batch PATCH ---
+print("Step 4: Updating via $batch API...")
 BATCH_SIZE = 50
 updated = 0
 errors = 0
-total_batches = (len(all_contacts) + BATCH_SIZE - 1) // BATCH_SIZE
+total_batches = (len(to_update) + BATCH_SIZE - 1) // BATCH_SIZE
 
-for batch_num, batch_start in enumerate(range(0, len(all_contacts), BATCH_SIZE), 1):
-    batch = all_contacts[batch_start:batch_start + BATCH_SIZE]
+for batch_num, batch_start in enumerate(range(0, len(to_update), BATCH_SIZE), 1):
+    batch = to_update[batch_start:batch_start + BATCH_SIZE]
     boundary = f"batch_{uuid.uuid4().hex}"
 
     parts = []
@@ -129,20 +123,31 @@ for batch_num, batch_start in enumerate(range(0, len(all_contacts), BATCH_SIZE),
         )
     body = "".join(parts) + f"--{boundary}--\r\n"
 
-    resp = requests.post(
-        f"{DYNAMICS_URL}/api/data/v9.2/$batch",
-        headers=get_headers({"Content-Type": f"multipart/mixed; boundary={boundary}"}),
-        data=body.encode("utf-8"),
-        timeout=120,
-    )
+    resp = None
+    for attempt in range(4):
+        try:
+            resp = requests.post(
+                f"{DYNAMICS_URL}/api/data/v9.2/$batch",
+                headers=get_headers({"Content-Type": f"multipart/mixed; boundary={boundary}"}),
+                data=body.encode("utf-8"),
+                timeout=120,
+            )
+            break
+        except Exception as e:
+            if attempt == 3:
+                errors += len(batch)
+                print(f"  Batch {batch_num}/{total_batches} NETWORK ERROR: {e}")
+                resp = None
+                break
+            time.sleep(2 ** attempt)
 
-    if resp.ok:
+    if resp is not None and resp.ok:
         ok_count = resp.text.count("HTTP/1.1 204")
         fail_count = len(batch) - ok_count
         updated += ok_count
         errors += fail_count
         print(f"  Batch {batch_num}/{total_batches}: {ok_count} updated, {fail_count} errors")
-    else:
+    elif resp is not None:
         errors += len(batch)
         print(f"  Batch {batch_num}/{total_batches} FAILED: {resp.status_code} {resp.text[:200]}")
 
