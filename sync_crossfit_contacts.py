@@ -1,13 +1,10 @@
 """
-Phase 2 sync: Update remaining null-tyr_tyrtype contacts whose parent account has CrossFit.
-
-Strategy:
-  1. Get all CrossFit account IDs (simple filter on accounts)
-  2. Get all contacts with null tyr_tyrtype
-  3. Cross-reference in Python
-  4. Batch PATCH updates (50 per request)
+Phase 2 sync: Update null tyr_tyrtype contacts from CrossFit accounts.
+Uses requests.Session with urllib3 automatic retry for stability.
 """
 import os, time, uuid, requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from dotenv import load_dotenv
 load_dotenv()
 from config.crm_connection import get_access_token
@@ -15,101 +12,91 @@ from config.crm_connection import get_access_token
 DYNAMICS_URL = os.getenv("DYNAMICS_URL", "").rstrip("/")
 CROSSFIT_VALUE = 935650004
 
-_token_cache = {"token": None, "expires_at": 0}
+# Session with automatic retry on 429/500/502/503/504
+session = requests.Session()
+session.mount("https://", HTTPAdapter(max_retries=Retry(
+    total=5,
+    backoff_factor=3,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET", "POST", "PATCH"],
+    respect_retry_after_header=True,
+)))
 
-def get_token():
-    now = time.time()
-    if not _token_cache["token"] or now >= _token_cache["expires_at"]:
-        print("  Refreshing auth token...")
-        _token_cache["token"] = get_access_token()
-        _token_cache["expires_at"] = now + 3000
-    return _token_cache["token"]
+_token = {"value": None, "expires": 0}
 
-def get_headers(extra=None):
-    h = {
-        "Authorization": f"Bearer {get_token()}",
+def auth_headers(content_type="application/json"):
+    if not _token["value"] or time.time() >= _token["expires"]:
+        print("  Getting auth token...")
+        _token["value"] = get_access_token()
+        _token["expires"] = time.time() + 3000
+    return {
+        "Authorization": f"Bearer {_token['value']}",
         "OData-MaxVersion": "4.0",
         "OData-Version": "4.0",
         "Accept": "application/json",
-        "Content-Type": "application/json",
+        "Content-Type": content_type,
     }
-    if extra:
-        h.update(extra)
-    return h
 
-def paginate(label, url, params):
-    results = []
-    page = 1
+def get_all(label, url, params):
+    results, page = [], 1
     while url:
-        print(f"  {label} page {page}...", end=" ", flush=True)
-        for attempt in range(4):
-            try:
-                resp = requests.get(url, headers=get_headers(), params=params, timeout=30)
-                break
-            except Exception as e:
-                if attempt == 3:
-                    raise
-                wait = 2 ** attempt
-                print(f"retry({e})...", end=" ", flush=True)
-                time.sleep(wait)
+        print(f"  [{label}] page {page}...", end=" ", flush=True)
+        resp = session.get(url, headers=auth_headers(), params=params, timeout=60)
         if not resp.ok:
-            raise Exception(f"HTTP {resp.status_code}: {resp.text[:200]}")
+            raise Exception(f"{label} query failed {resp.status_code}: {resp.text[:200]}")
         data = resp.json()
         batch = data.get("value", [])
         results.extend(batch)
-        print(f"{len(batch)} (total {len(results)})")
+        print(f"{len(batch)} (running total: {len(results)})")
         url = data.get("@odata.nextLink")
         params = None
         page += 1
+        time.sleep(1)
     return results
 
-# --- Step 1: CrossFit account IDs ---
-print("Step 1: Getting CrossFit account IDs...")
-crossfit_accounts = paginate(
-    "accounts",
-    f"{DYNAMICS_URL}/api/data/v9.2/accounts",
-    {
-        "$select": "accountid",
-        "$filter": "Microsoft.Dynamics.CRM.ContainValues(PropertyName='tyr_tyrtype',PropertyValues=['935650004'])",
-        "$top": 1000,
-    },
-)
-crossfit_ids = {a["accountid"] for a in crossfit_accounts}
-print(f"  CrossFit account count: {len(crossfit_ids)}\n")
+print("=" * 50)
+print("Step 1: CrossFit account IDs")
+print("=" * 50)
+accounts = get_all("accounts", f"{DYNAMICS_URL}/api/data/v9.2/accounts", {
+    "$select": "accountid",
+    "$filter": "Microsoft.Dynamics.CRM.ContainValues(PropertyName='tyr_tyrtype',PropertyValues=['935650004'])",
+    "$top": 5000,
+})
+crossfit_ids = {a["accountid"] for a in accounts}
+print(f"  Total: {len(crossfit_ids)} CrossFit accounts\n")
 
-# --- Step 2: Contacts with null tyr_tyrtype ---
-print("Step 2: Getting contacts with null tyr_tyrtype...")
-null_contacts = paginate(
-    "contacts",
-    f"{DYNAMICS_URL}/api/data/v9.2/contacts",
-    {
-        "$select": "contactid,_parentcustomerid_value",
-        "$filter": "tyr_tyrtype eq null",
-        "$top": 1000,
-    },
-)
-print(f"  Null-tyr_tyrtype contact count: {len(null_contacts)}\n")
+print("=" * 50)
+print("Step 2: Contacts with null tyr_tyrtype")
+print("=" * 50)
+null_contacts = get_all("contacts", f"{DYNAMICS_URL}/api/data/v9.2/contacts", {
+    "$select": "contactid,_parentcustomerid_value",
+    "$filter": "tyr_tyrtype eq null",
+    "$top": 5000,
+})
+print(f"  Total: {len(null_contacts)} null contacts\n")
 
-# --- Step 3: Cross-reference ---
+print("=" * 50)
+print("Step 3: Cross-reference")
+print("=" * 50)
 to_update = [c for c in null_contacts if c.get("_parentcustomerid_value") in crossfit_ids]
 skipped = len(null_contacts) - len(to_update)
-print(f"Step 3: {len(to_update)} contacts need CrossFit value ({skipped} skipped - no CrossFit parent)\n")
+print(f"  To update (CrossFit parent): {len(to_update)}")
+print(f"  Skipped (no CrossFit parent): {skipped}\n")
 
 if not to_update:
     print("Nothing to update!")
     exit(0)
 
-# --- Step 4: Batch PATCH ---
-print("Step 4: Updating via $batch API...")
+print("=" * 50)
+print("Step 4: Batch PATCH updates")
+print("=" * 50)
 BATCH_SIZE = 50
-updated = 0
-errors = 0
+updated = errors = 0
 total_batches = (len(to_update) + BATCH_SIZE - 1) // BATCH_SIZE
 
-for batch_num, batch_start in enumerate(range(0, len(to_update), BATCH_SIZE), 1):
-    batch = to_update[batch_start:batch_start + BATCH_SIZE]
+for batch_num, start in enumerate(range(0, len(to_update), BATCH_SIZE), 1):
+    batch = to_update[start:start + BATCH_SIZE]
     boundary = f"batch_{uuid.uuid4().hex}"
-
     parts = []
     for c in batch:
         parts.append(
@@ -123,34 +110,23 @@ for batch_num, batch_start in enumerate(range(0, len(to_update), BATCH_SIZE), 1)
         )
     body = "".join(parts) + f"--{boundary}--\r\n"
 
-    resp = None
-    for attempt in range(4):
-        try:
-            resp = requests.post(
-                f"{DYNAMICS_URL}/api/data/v9.2/$batch",
-                headers=get_headers({"Content-Type": f"multipart/mixed; boundary={boundary}"}),
-                data=body.encode("utf-8"),
-                timeout=120,
-            )
-            break
-        except Exception as e:
-            if attempt == 3:
-                errors += len(batch)
-                print(f"  Batch {batch_num}/{total_batches} NETWORK ERROR: {e}")
-                resp = None
-                break
-            time.sleep(2 ** attempt)
-
-    if resp is not None and resp.ok:
-        ok_count = resp.text.count("HTTP/1.1 204")
-        fail_count = len(batch) - ok_count
-        updated += ok_count
-        errors += fail_count
-        print(f"  Batch {batch_num}/{total_batches}: {ok_count} updated, {fail_count} errors")
-    elif resp is not None:
+    resp = session.post(
+        f"{DYNAMICS_URL}/api/data/v9.2/$batch",
+        headers={**auth_headers(), "Content-Type": f"multipart/mixed; boundary={boundary}"},
+        data=body.encode("utf-8"),
+        timeout=120,
+    )
+    if resp.ok:
+        ok = resp.text.count("HTTP/1.1 204")
+        fail = len(batch) - ok
+        updated += ok
+        errors += fail
+        print(f"  Batch {batch_num}/{total_batches}: {ok} updated, {fail} errors")
+    else:
         errors += len(batch)
-        print(f"  Batch {batch_num}/{total_batches} FAILED: {resp.status_code} {resp.text[:200]}")
+        print(f"  Batch {batch_num}/{total_batches} FAILED {resp.status_code}: {resp.text[:150]}")
+    time.sleep(2)
 
-print(f"\nDone.")
+print(f"\nFinal:")
 print(f"  Updated: {updated}")
 print(f"  Errors:  {errors}")
