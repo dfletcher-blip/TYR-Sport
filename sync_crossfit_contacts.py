@@ -1,10 +1,8 @@
 """
 Targeted sync: Set tyr_tyrtype = CrossFit (935650004) on all contacts
-whose parent account has CrossFit selected.
+whose parent account has CrossFit selected AND who currently have null tyr_tyrtype.
 
-Strategy:
-  1. Single paginated query to get all CrossFit contacts at once
-  2. Batch PATCH requests (50 per HTTP call) to update them
+Uses FetchXML (inner join) to get contacts efficiently, then batch PATCH.
 """
 import os, time, uuid, requests
 from dotenv import load_dotenv
@@ -16,14 +14,17 @@ CROSSFIT_VALUE = 935650004
 
 _token_cache = {"token": None, "expires_at": 0}
 
-def get_headers(extra=None):
+def get_token():
     now = time.time()
     if not _token_cache["token"] or now >= _token_cache["expires_at"]:
         print("  Fetching auth token...")
         _token_cache["token"] = get_access_token()
         _token_cache["expires_at"] = now + 3000
+    return _token_cache["token"]
+
+def get_headers(extra=None):
     h = {
-        "Authorization": f"Bearer {_token_cache['token']}",
+        "Authorization": f"Bearer {get_token()}",
         "OData-MaxVersion": "4.0",
         "OData-Version": "4.0",
         "Accept": "application/json",
@@ -33,54 +34,86 @@ def get_headers(extra=None):
         h.update(extra)
     return h
 
-# --- Step 1: Get all CrossFit contacts in one paginated query ---
-print("Step 1: Fetching all contacts from CrossFit accounts...")
-all_contacts = []
-url = f"{DYNAMICS_URL}/api/data/v9.2/contacts"
-params = {
-    "$select": "contactid,tyr_tyrtype",
-    "$filter": "parentcustomerid_account/Microsoft.Dynamics.CRM.ContainValues(PropertyName='tyr_tyrtype',PropertyValues=['935650004'])",
-    "$top": 1000,
-}
+# FetchXML: contacts with null tyr_tyrtype whose parent account has CrossFit
+FETCH_XML = """
+<fetch>
+  <entity name="contact">
+    <attribute name="contactid"/>
+    <attribute name="tyr_tyrtype"/>
+    <filter>
+      <condition attribute="tyr_tyrtype" operator="null"/>
+    </filter>
+    <link-entity name="account" from="accountid" to="parentcustomerid" link-type="inner">
+      <filter>
+        <condition attribute="tyr_tyrtype" operator="contain-values">
+          <value>935650004</value>
+        </condition>
+      </filter>
+    </link-entity>
+  </entity>
+</fetch>
+"""
 
+# --- Step 1: Collect all matching contacts via FetchXML paging ---
+print("Step 1: Finding contacts with null tyr_tyrtype from CrossFit accounts...")
+all_contacts = []
 page = 1
+paging_cookie = None
+
 while True:
+    fetch = FETCH_XML.strip()
+    # Insert paging attributes
+    if paging_cookie:
+        import xml.sax.saxutils as saxutils
+        cookie_escaped = saxutils.escape(paging_cookie)
+        fetch = fetch.replace(
+            "<fetch>",
+            f'<fetch page="{page}" paging-cookie="{cookie_escaped}">'
+        )
+    else:
+        fetch = fetch.replace("<fetch>", f'<fetch page="{page}" count="500">')
+
     print(f"  Page {page}...", end=" ", flush=True)
-    resp = requests.get(url, headers=get_headers(), params=params, timeout=60)
+    resp = requests.get(
+        f"{DYNAMICS_URL}/api/data/v9.2/contacts",
+        headers=get_headers({"Prefer": "odata.include-annotations=Microsoft.Dynamics.CRM.fetchxmlpagingcookie"}),
+        params={"fetchXml": fetch},
+        timeout=60,
+    )
+
     if not resp.ok:
-        print(f"\nFAILED: {resp.status_code}")
-        print(resp.text[:500])
+        print(f"\nFAILED: {resp.status_code} {resp.text[:500]}")
         exit(1)
+
     data = resp.json()
     batch = data.get("value", [])
     all_contacts.extend(batch)
-    print(f"{len(batch)} contacts")
-    next_link = data.get("@odata.nextLink")
-    if not next_link:
+    print(f"{len(batch)} contacts (total: {len(all_contacts)})")
+
+    # Check for next page
+    paging_annotation = data.get("@Microsoft.Dynamics.CRM.fetchxmlpagingcookie")
+    if not paging_annotation or len(batch) == 0:
         break
-    url = next_link
-    params = None
+
+    # Extract raw cookie from annotation
+    import urllib.parse
+    paging_cookie = urllib.parse.unquote(paging_annotation)
     page += 1
 
-to_update = [c for c in all_contacts if c.get("tyr_tyrtype") != CROSSFIT_VALUE]
-already_correct = len(all_contacts) - len(to_update)
-print(f"\nTotal CrossFit contacts: {len(all_contacts)}")
-print(f"  Already correct: {already_correct}")
-print(f"  Need update:     {len(to_update)}\n")
-
-if not to_update:
+print(f"\nContacts to update: {len(all_contacts)}")
+if not all_contacts:
     print("Nothing to update!")
     exit(0)
 
-# --- Step 2: Batch update (50 patches per HTTP request) ---
-print("Step 2: Updating contacts via batch API...")
+# --- Step 2: Batch PATCH (50 per request) ---
+print("\nStep 2: Updating via batch API...")
 BATCH_SIZE = 50
 updated = 0
 errors = 0
-total_batches = (len(to_update) + BATCH_SIZE - 1) // BATCH_SIZE
+total_batches = (len(all_contacts) + BATCH_SIZE - 1) // BATCH_SIZE
 
-for batch_num, batch_start in enumerate(range(0, len(to_update), BATCH_SIZE), 1):
-    batch = to_update[batch_start:batch_start + BATCH_SIZE]
+for batch_num, batch_start in enumerate(range(0, len(all_contacts), BATCH_SIZE), 1):
+    batch = all_contacts[batch_start:batch_start + BATCH_SIZE]
     boundary = f"batch_{uuid.uuid4().hex}"
 
     parts = []
@@ -114,6 +147,5 @@ for batch_num, batch_start in enumerate(range(0, len(to_update), BATCH_SIZE), 1)
         print(f"  Batch {batch_num}/{total_batches} FAILED: {resp.status_code} {resp.text[:200]}")
 
 print(f"\nDone.")
-print(f"  Updated:         {updated}")
-print(f"  Already correct: {already_correct}")
-print(f"  Errors:          {errors}")
+print(f"  Updated: {updated}")
+print(f"  Errors:  {errors}")
