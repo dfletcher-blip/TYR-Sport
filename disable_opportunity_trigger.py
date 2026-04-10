@@ -33,13 +33,13 @@ CATEGORY_NAMES = {
 }
 
 # Step 1: Find all active workflows/flows on Account entity
-print("Searching for active workflows triggered on Account creation...\n")
+print("Searching for active workflows/flows on Account...\n")
 resp = requests.get(
     f"{DYNAMICS_URL}/api/data/v9.2/workflows",
     headers=get_headers(),
     params={
         "$select": "workflowid,name,category,statecode,statuscode,description,triggeroncreate",
-        "$filter": "primaryentity eq 'account' and statecode eq 1 and triggeroncreate eq true",
+        "$filter": "primaryentity eq 'account' and statecode eq 1",
         "$top": 100,
     },
     timeout=30,
