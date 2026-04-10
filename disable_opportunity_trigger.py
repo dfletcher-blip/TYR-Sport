@@ -1,5 +1,6 @@
 """
-Deep inspect the plugin steps that fire on Account Create to find the one creating opportunities.
+Find the Power Automate flow or workflow that creates opportunities on Account create.
+Searches all category=5 flows and all classic workflows mentioning account/opportunity.
 """
 import os, requests, time
 from dotenv import load_dotenv
@@ -22,38 +23,45 @@ def get_headers():
         "Content-Type": "application/json",
     }
 
-# Get full details on plugin steps that fire on Account Create
-# Expand sdkmessage (message name), sdkmessagefilter (entity), plugintype (assembly)
-print("Getting detailed plugin steps for Account Create...\n")
-resp = requests.get(
-    f"{DYNAMICS_URL}/api/data/v9.2/sdkmessageprocessingsteps",
-    headers=get_headers(),
-    params={
-        "$select": "sdkmessageprocessingstepid,name,description,statecode,stage,rank",
-        "$filter": "statecode eq 0 and contains(name,'ccount') and contains(name,'reate')",
-        "$expand": "sdkmessageid($select=name),sdkmessagefilterid($select=primaryobjecttypecode),plugintypeid($select=assemblyname,typename)",
-        "$top": 50,
-    },
-    timeout=30,
-)
+def search(label, params):
+    print(f"\n--- {label} ---")
+    resp = requests.get(
+        f"{DYNAMICS_URL}/api/data/v9.2/workflows",
+        headers=get_headers(),
+        params=params,
+        timeout=30,
+    )
+    if not resp.ok:
+        print(f"FAILED {resp.status_code}: {resp.text[:200]}")
+        return []
+    results = resp.json().get("value", [])
+    print(f"Found {len(results)} result(s):")
+    for wf in results:
+        print(f"  Name:    {wf.get('name')}")
+        print(f"  ID:      {wf.get('workflowid')}")
+        print(f"  Entity:  {wf.get('primaryentity')}")
+        print(f"  Category:{wf.get('category')} (0=Workflow,5=PA Flow)")
+        print(f"  TriggerOnCreate: {wf.get('triggeroncreate')}")
+        print()
+    return results
 
-if not resp.ok:
-    print(f"FAILED: {resp.status_code} {resp.text[:300]}")
-    exit(1)
+# All active Power Automate flows (category=5)
+search("All active Power Automate Flows (category=5)", {
+    "$select": "workflowid,name,category,primaryentity,statecode,triggeroncreate,description",
+    "$filter": "statecode eq 1 and category eq 5",
+    "$top": 100,
+})
 
-steps = resp.json().get("value", [])
-print(f"Found {len(steps)} steps:\n")
+# All active classic workflows (category=0) - any entity
+search("All active Classic Workflows (category=0)", {
+    "$select": "workflowid,name,category,primaryentity,statecode,triggeroncreate,description",
+    "$filter": "statecode eq 1 and category eq 0",
+    "$top": 100,
+})
 
-for s in steps:
-    msg = s.get("sdkmessageid") or {}
-    filt = s.get("sdkmessagefilterid") or {}
-    plugin = s.get("plugintypeid") or {}
-    print(f"Name:     {s['name']}")
-    print(f"ID:       {s['sdkmessageprocessingstepid']}")
-    print(f"Message:  {msg.get('name', 'unknown')}")
-    print(f"Entity:   {filt.get('primaryobjecttypecode', 'unknown')}")
-    print(f"Assembly: {plugin.get('assemblyname', 'unknown')}")
-    print(f"Class:    {plugin.get('typename', 'unknown')}")
-    print(f"Stage:    {s.get('stage')} (10=PreValidation, 20=PreOperation, 40=PostOperation)")
-    print(f"State:    {'Active' if s.get('statecode') == 0 else 'Inactive'}")
-    print()
+# Workflows on Opportunity entity that trigger on create (might cascade from account)
+search("Active workflows on Opportunity entity", {
+    "$select": "workflowid,name,category,primaryentity,statecode,triggeroncreate,description",
+    "$filter": "primaryentity eq 'opportunity' and statecode eq 1",
+    "$top": 50,
+})
