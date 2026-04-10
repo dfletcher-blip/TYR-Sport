@@ -38,8 +38,8 @@ resp = requests.get(
     f"{DYNAMICS_URL}/api/data/v9.2/workflows",
     headers=get_headers(),
     params={
-        "$select": "workflowid,name,category,statecode,statuscode,description,triggeroncreateof,createstage",
-        "$filter": "primaryentity eq 'account' and statecode eq 1 and triggeroncreateof eq 'account'",
+        "$select": "workflowid,name,category,statecode,statuscode,description,triggeroncreate",
+        "$filter": "primaryentity eq 'account' and statecode eq 1 and triggeroncreate eq true",
         "$top": 100,
     },
     timeout=30,
