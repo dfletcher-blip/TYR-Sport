@@ -69,7 +69,7 @@ def get_stages(bpf_id):
         headers=get_headers(),
         params={
             "$select": "processstageid,stagename",
-            "$filter": f"processid eq {bpf_id}",
+            "$filter": f"_processid_value eq {bpf_id}",
         },
         timeout=30,
     )
@@ -101,7 +101,7 @@ all_leads = []
 url = f"{DYNAMICS_URL}/api/data/v9.2/leads"
 params = {
     "$select": "leadid,fullname,stageid",
-    "$filter": f"processid eq '{old_bpf_id}' and statecode eq 0",
+    "$filter": f"_processid_value eq {old_bpf_id} and statecode eq 0",
     "$top": 1000,
 }
 while url:
