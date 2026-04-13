@@ -79,8 +79,9 @@ resp = requests.get(
     headers=get_headers(),
     params={
         "$select": "workflowid,name,clientdata,statecode,ismanaged",
-        "$filter": "category eq 4 and contains(name,'Lead to Opportunity')",
-        "$top": 5,
+        "$filter": "category eq 4 and contains(name,'Lead to Opportunity') and statecode eq 1",
+        "$orderby": "createdon desc",
+        "$top": 1,
     },
     timeout=30,
 )
