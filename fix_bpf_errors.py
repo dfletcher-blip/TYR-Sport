@@ -120,8 +120,24 @@ if not removed:
             print(f"  [{f}]: ...{clientdata[max(0,idx-100):idx+150]}...")
     exit(0)
 
-# --- Step 5: Patch BPF ---
-print("Step 5: Saving fixed BPF...")
+# --- Step 5: Deactivate BPF ---
+print("Step 5: Deactivating BPF...")
+deactivate = requests.patch(
+    f"{DYNAMICS_URL}/api/data/v9.2/workflows({bpf_id})",
+    headers={**get_headers(), "If-Match": "*"},
+    json={"statecode": 0, "statuscode": 1},
+    timeout=30,
+)
+if deactivate.ok or deactivate.status_code == 204:
+    print("  Deactivated.\n")
+else:
+    print(f"  FAILED to deactivate: {deactivate.status_code} {deactivate.text[:200]}")
+    exit(1)
+
+time.sleep(2)
+
+# --- Step 6: Patch clientdata ---
+print("Step 6: Saving fixed definition...")
 fixed_json = json.dumps(fixed_data)
 patch = requests.patch(
     f"{DYNAMICS_URL}/api/data/v9.2/workflows({bpf_id})",
@@ -130,7 +146,24 @@ patch = requests.patch(
     timeout=30,
 )
 if patch.ok or patch.status_code == 204:
-    print("  SUCCESS — BPF updated.")
-    print("  Go to the BPF editor in CRM, click Validate, then Save.")
+    print("  Definition saved.\n")
 else:
-    print(f"  FAILED: {patch.status_code} {patch.text[:300]}")
+    print(f"  FAILED to patch: {patch.status_code} {patch.text[:300]}")
+    exit(1)
+
+time.sleep(2)
+
+# --- Step 7: Reactivate BPF ---
+print("Step 7: Reactivating BPF...")
+activate = requests.patch(
+    f"{DYNAMICS_URL}/api/data/v9.2/workflows({bpf_id})",
+    headers={**get_headers(), "If-Match": "*"},
+    json={"statecode": 1, "statuscode": 2},
+    timeout=30,
+)
+if activate.ok or activate.status_code == 204:
+    print("  SUCCESS — BPF reactivated with fixed definition.")
+    print("  Open the BPF editor in CRM and click Validate to confirm.")
+else:
+    print(f"  FAILED to reactivate: {activate.status_code} {activate.text[:300]}")
+    print("  The BPF is currently INACTIVE — manually reactivate it in CRM.")
