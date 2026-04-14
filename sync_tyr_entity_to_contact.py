@@ -219,15 +219,11 @@ else:
 # Step 3: Sync values from Account to Contact
 print("Step 3: Syncing values from Account to Contact...")
 
-# Query 1: all accounts that have tyr_tyrentity set
-print("  Getting accounts with values...")
+# Query 1: ALL accounts (no filter — avoid any OData null-filter edge cases)
+print("  Getting ALL accounts...")
 acct_values = {}
 url = f"{DYNAMICS_URL}/api/data/v9.2/accounts"
-params = {
-    "$select": f"accountid,{field_logical}",
-    "$filter": f"{field_logical} ne null",
-    "$top": 5000,
-}
+params = {"$select": f"accountid,{field_logical}", "$top": 5000}
 while url:
     r = requests.get(url, headers=get_headers(), params=params, timeout=60)
     if not r.ok:
@@ -235,18 +231,19 @@ while url:
         exit(1)
     data = r.json()
     for a in data.get("value", []):
-        acct_values[a["accountid"]] = a[field_logical]
+        val = a.get(field_logical)
+        if val is not None:
+            acct_values[a["accountid"]] = val
     url = data.get("@odata.nextLink")
     params = None
-print(f"  Found {len(acct_values)} accounts with {field_logical} set")
+print(f"  Total accounts fetched; {len(acct_values)} have {field_logical} set")
 
-# Query 2: all contacts with a parent account
-print("  Getting contacts...")
+# Query 2: ALL contacts (no filter — get every contact regardless of parent type)
+print("  Getting ALL contacts...")
 all_contacts = []
 url = f"{DYNAMICS_URL}/api/data/v9.2/contacts"
 params = {
     "$select": f"contactid,{field_logical},_parentcustomerid_value",
-    "$filter": "_parentcustomerid_value ne null",
     "$top": 5000,
 }
 while url:
@@ -259,18 +256,31 @@ while url:
     url = data.get("@odata.nextLink")
     params = None
     time.sleep(0.3)
-print(f"  Found {len(all_contacts)} contacts with parent customers")
+print(f"  Total contacts fetched: {len(all_contacts)}")
 
-# Cross-reference in Python
+# Cross-reference in Python — detailed breakdown
+no_parent = matched_acct = already_synced = needs_update = 0
 to_update = []
 for c in all_contacts:
     parent_id = c.get("_parentcustomerid_value")
+    if not parent_id:
+        no_parent += 1
+        continue
     acct_val = acct_values.get(parent_id)
+    if acct_val is None:
+        continue  # parent is a Contact, or account has no value
+    matched_acct += 1
     contact_val = c.get(field_logical)
-    if acct_val is not None and acct_val != contact_val:
+    if acct_val == contact_val:
+        already_synced += 1
+    else:
+        needs_update += 1
         to_update.append({"contactid": c["contactid"], field_logical: acct_val})
 
-print(f"  Contacts needing sync: {len(to_update)}\n")
+print(f"  Contacts with no parent:                {no_parent}")
+print(f"  Contacts matched to an account w/value: {matched_acct}")
+print(f"  Already in sync:                        {already_synced}")
+print(f"  Need update:                            {needs_update}\n")
 
 if not to_update:
     print("All contacts already in sync.")
