@@ -101,7 +101,7 @@ else:
     # Get full metadata from Account field
     r_meta = requests.get(
         f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='account')/Attributes(LogicalName='{field_logical}')",
-        headers=get_headers({"Accept": "application/json; odata.metadata=full"}),
+        headers=get_headers(),
         timeout=30,
     )
     meta = r_meta.json()
@@ -117,11 +117,33 @@ else:
         "IsValidForAdvancedFind": {"Value": True, "CanBeChanged": True, "ManagedPropertyLogicalName": "canmodifysearchsettings"},
     }
     if "Picklist" in field_odata_type or "MultiSelectPicklist" in field_odata_type:
-        option_set = meta.get("OptionSet") or meta.get("GlobalOptionSet")
-        if option_set and option_set.get("IsGlobal"):
-            payload["GlobalOptionSet"] = {"Name": option_set["Name"]}
-        elif option_set:
-            payload["OptionSet"] = option_set
+        # Fetch OptionSet via navigation property
+        if "MultiSelectPicklist" in field_odata_type:
+            nav = "Microsoft.Dynamics.CRM.MultiSelectPicklistAttributeMetadata/OptionSet"
+        else:
+            nav = "Microsoft.Dynamics.CRM.PicklistAttributeMetadata/OptionSet"
+        r_os = requests.get(
+            f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='account')/Attributes(LogicalName='{field_logical}')/{nav}",
+            headers=get_headers(),
+            timeout=30,
+        )
+        if r_os.ok:
+            option_set = r_os.json()
+            is_global = option_set.get("IsGlobal", False)
+            os_name = option_set.get("Name", "")
+            print(f"  OptionSet: name={os_name}, IsGlobal={is_global}")
+            if is_global and os_name:
+                # Reference the global option set by name only
+                payload["OptionSet"] = {
+                    "@odata.type": "Microsoft.Dynamics.CRM.OptionSetMetadata",
+                    "Name": os_name,
+                    "IsGlobal": True,
+                }
+            else:
+                # Local option set — copy the full definition
+                payload["OptionSet"] = option_set
+        else:
+            print(f"  WARNING: Could not fetch OptionSet: {r_os.status_code} {r_os.text[:200]}")
 
     r_create = requests.post(
         f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='contact')/Attributes",
