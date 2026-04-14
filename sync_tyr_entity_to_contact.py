@@ -38,7 +38,7 @@ while url:
     params = None
 
 def label(f):
-    return (f.get("DisplayName") or {}).get("UserLocalizedLabel", {}).get("Label", "").lower()
+    return ((f.get("DisplayName") or {}).get("UserLocalizedLabel") or {}).get("Label", "").lower()
 
 tyr_entity_fields = [
     f for f in all_acct_fields
