@@ -218,31 +218,54 @@ else:
 
 # Step 3: Sync values from Account to Contact
 print("Step 3: Syncing values from Account to Contact...")
-all_contacts = []
-url = f"{DYNAMICS_URL}/api/data/v9.2/contacts"
+
+# Query 1: all accounts that have tyr_tyrentity set
+print("  Getting accounts with values...")
+acct_values = {}
+url = f"{DYNAMICS_URL}/api/data/v9.2/accounts"
 params = {
-    "$select": f"contactid,{field_logical}",
-    "$expand": f"parentcustomerid_account($select={field_logical})",
-    "$filter": "parentcustomerid_account ne null",
-    "$top": 1000,
+    "$select": f"accountid,{field_logical}",
+    "$filter": f"{field_logical} ne null",
+    "$top": 5000,
 }
 while url:
     r = requests.get(url, headers=get_headers(), params=params, timeout=60)
+    if not r.ok:
+        print(f"  ERROR fetching accounts: {r.status_code} {r.text[:300]}")
+        exit(1)
     data = r.json()
+    for a in data.get("value", []):
+        acct_values[a["accountid"]] = a[field_logical]
+    url = data.get("@odata.nextLink")
+    params = None
+print(f"  Found {len(acct_values)} accounts with {field_logical} set")
+
+# Query 2: all contacts with a parent account
+print("  Getting contacts...")
+all_contacts = []
+url = f"{DYNAMICS_URL}/api/data/v9.2/contacts"
+params = {
+    "$select": f"contactid,{field_logical},_parentcustomerid_value",
+    "$filter": "_parentcustomerid_value ne null",
+    "$top": 5000,
+}
+while url:
+    r = requests.get(url, headers=get_headers(), params=params, timeout=60)
     if not r.ok:
         print(f"  ERROR fetching contacts: {r.status_code} {r.text[:300]}")
         exit(1)
+    data = r.json()
     all_contacts.extend(data.get("value", []))
     url = data.get("@odata.nextLink")
     params = None
-    time.sleep(0.5)
+    time.sleep(0.3)
+print(f"  Found {len(all_contacts)} contacts with parent customers")
 
-print(f"  Found {len(all_contacts)} contacts with parent accounts\n")
-
+# Cross-reference in Python
 to_update = []
 for c in all_contacts:
-    acct = c.get("parentcustomerid_account") or {}
-    acct_val = acct.get(field_logical)
+    parent_id = c.get("_parentcustomerid_value")
+    acct_val = acct_values.get(parent_id)
     contact_val = c.get(field_logical)
     if acct_val is not None and acct_val != contact_val:
         to_update.append({"contactid": c["contactid"], field_logical: acct_val})
