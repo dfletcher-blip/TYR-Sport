@@ -1,6 +1,9 @@
 """
 Agent: Find 'TYR entity' field on Account, create it on Contact if missing,
 then sync values from Account to Contact.
+
+Set TYR_ENTITY_FIELD env var to override auto-detection, e.g.:
+  TYR_ENTITY_FIELD=tyr_entitytype python sync_tyr_entity_to_contact.py
 """
 import os, json, requests, time, uuid
 from dotenv import load_dotenv
@@ -8,6 +11,7 @@ load_dotenv()
 from config.crm_connection import get_access_token
 
 DYNAMICS_URL = os.getenv("DYNAMICS_URL", "").rstrip("/")
+OVERRIDE_FIELD = os.getenv("TYR_ENTITY_FIELD", "").strip()
 
 _token = {"value": None, "expires": 0}
 
@@ -40,30 +44,48 @@ while url:
 def label(f):
     return ((f.get("DisplayName") or {}).get("UserLocalizedLabel") or {}).get("Label", "").lower()
 
-tyr_entity_fields = [
-    f for f in all_acct_fields
-    if ("tyr" in f.get("LogicalName","").lower() and "entit" in f.get("LogicalName","").lower())
-    or ("tyr" in label(f) and "entit" in label(f))
-]
-print(f"  Found {len(tyr_entity_fields)} TYR entity field(s) on Account:")
-for f in tyr_entity_fields:
-    print(f"  LogicalName: {f['LogicalName']}")
-    print(f"  DisplayName: {label(f)}")
-    print(f"  Type:        {f['AttributeType']}")
+# Always show all TYR fields for reference
+all_tyr = [f for f in all_acct_fields if "tyr" in f.get("LogicalName","").lower()]
+print(f"\n  ALL TYR fields on Account ({len(all_tyr)} total):")
+for f in all_tyr:
+    lbl = label(f)
+    print(f"  {f['LogicalName']:45s} ({f['AttributeType']:25s}) — {lbl}")
 print()
 
-if not tyr_entity_fields:
-    print("No TYR entity field found by name. Listing ALL TYR fields on Account:")
-    all_tyr = [f for f in all_acct_fields if "tyr" in f.get("LogicalName","").lower()]
-    for f in all_tyr:
-        print(f"  {f['LogicalName']:40s} ({f['AttributeType']:20s}) — {label(f)}")
-    exit(0)
+# If override specified, use that field directly
+if OVERRIDE_FIELD:
+    matched = [f for f in all_acct_fields if f.get("LogicalName","").lower() == OVERRIDE_FIELD.lower()]
+    if not matched:
+        print(f"ERROR: Field '{OVERRIDE_FIELD}' not found on Account.")
+        exit(1)
+    tyr_entity_fields = matched
+    print(f"Using override field: {OVERRIDE_FIELD}\n")
+else:
+    # Auto-detect: both "tyr" AND "entit" in logical name or display label
+    tyr_entity_fields = [
+        f for f in all_acct_fields
+        if ("tyr" in f.get("LogicalName","").lower() and "entit" in f.get("LogicalName","").lower())
+        or ("tyr" in label(f) and "entit" in label(f))
+    ]
+    print(f"  Auto-detected {len(tyr_entity_fields)} TYR entity field(s):")
+    for f in tyr_entity_fields:
+        print(f"  LogicalName: {f['LogicalName']}")
+        print(f"  DisplayName: {label(f)}")
+        print(f"  Type:        {f['AttributeType']}")
+    print()
+
+    if not tyr_entity_fields:
+        print("No field matched 'tyr'+'entit'.")
+        print("Set TYR_ENTITY_FIELD=<LogicalName> to specify the field manually.")
+        print("Example:")
+        print("  TYR_ENTITY_FIELD=tyr_entity python sync_tyr_entity_to_contact.py")
+        exit(0)
 
 field = tyr_entity_fields[0]
 field_logical = field["LogicalName"]
 field_schema = field["SchemaName"]
 field_type = field["AttributeType"]
-print(f"Using field: {field_logical} ({field_type})\n")
+print(f"Using field: {field_logical} (type: {field_type})\n")
 
 # Step 2: Check if field already exists on Contact
 print("Step 2: Checking if field exists on Contact...")
@@ -119,7 +141,7 @@ else:
         )
         print(f"  Publish response: {r_pub.status_code}\n")
     else:
-        print(f"  FAILED to create: {r_create.status_code} {r_create.text[:300]}")
+        print(f"  FAILED to create: {r_create.status_code} {r_create.text[:500]}")
         exit(1)
 
 # Step 3: Sync values from Account to Contact
@@ -135,6 +157,9 @@ params = {
 while url:
     r = requests.get(url, headers=get_headers(), params=params, timeout=60)
     data = r.json()
+    if not r.ok:
+        print(f"  ERROR fetching contacts: {r.status_code} {r.text[:300]}")
+        exit(1)
     all_contacts.extend(data.get("value", []))
     url = data.get("@odata.nextLink")
     params = None
