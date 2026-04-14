@@ -150,14 +150,13 @@ else:
                 os_name = os_data.get("Name", "")
                 print(f"  IsGlobal={is_global}, Name={os_name!r}")
                 if is_global and os_name:
-                    # Correct payload key is "OptionSet" with IsGlobal=True (NOT "GlobalOptionSet")
-                    payload["OptionSet"] = {
-                        "@odata.type": "Microsoft.Dynamics.CRM.OptionSetMetadata",
-                        "IsGlobal": True,
-                        "Name": os_name,
-                    }
+                    metadata_id = os_data.get("MetadataId", "")
+                    print(f"  MetadataId: {metadata_id}")
+                    # Use @odata.bind to reference existing global option set
+                    # (cannot pass IsGlobal=True via OptionSet key — API rejects it)
+                    payload["GlobalOptionSet@odata.bind"] = f"/GlobalOptionSetDefinitions({metadata_id})"
                     os_resolved = True
-                    print(f"  -> OptionSet resolved: {os_name}")
+                    print(f"  -> Bound to global OptionSet: {os_name} ({metadata_id})")
                 else:
                     # Local option set — copy definition, strip read-only fields
                     strip = {"MetadataId", "@odata.context", "@odata.type", "HasChanged",
@@ -183,13 +182,10 @@ else:
             )
             print(f"  GlobalOptionSetDefinitions filter '{gos_name}': {r_gos.status_code}")
             if r_gos.ok and r_gos.json().get("value"):
-                payload["OptionSet"] = {
-                    "@odata.type": "Microsoft.Dynamics.CRM.OptionSetMetadata",
-                    "IsGlobal": True,
-                    "Name": gos_name,
-                }
+                mid = r_gos.json()["value"][0]["MetadataId"]
+                payload["GlobalOptionSet@odata.bind"] = f"/GlobalOptionSetDefinitions({mid})"
                 os_resolved = True
-                print(f"  -> Found global option set by name: {gos_name}")
+                print(f"  -> Bound to global OptionSet: {gos_name} ({mid})")
 
         if not os_resolved:
             print("  ERROR: Could not resolve OptionSet by any method. Cannot create Picklist field.")
