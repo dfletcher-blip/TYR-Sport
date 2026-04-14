@@ -219,13 +219,16 @@ else:
 # Step 3: Sync values from Account to Contact
 print("Step 3: Syncing values from Account to Contact...")
 
-# Query 1: ALL accounts (no filter — avoid any OData null-filter edge cases)
+PAGE_HEADERS = {"Prefer": "odata.maxpagesize=5000"}
+
+# Query 1: ALL accounts — use Prefer header for pagination, not $top
 print("  Getting ALL accounts...")
 acct_values = {}
 url = f"{DYNAMICS_URL}/api/data/v9.2/accounts"
-params = {"$select": f"accountid,{field_logical}", "$top": 5000}
+params = {"$select": f"accountid,{field_logical}"}
+page = 0
 while url:
-    r = requests.get(url, headers=get_headers(), params=params, timeout=60)
+    r = requests.get(url, headers=get_headers(PAGE_HEADERS), params=params, timeout=60)
     if not r.ok:
         print(f"  ERROR fetching accounts: {r.status_code} {r.text[:300]}")
         exit(1)
@@ -234,29 +237,29 @@ while url:
         val = a.get(field_logical)
         if val is not None:
             acct_values[a["accountid"]] = val
+    page += 1
     url = data.get("@odata.nextLink")
     params = None
-print(f"  Total accounts fetched; {len(acct_values)} have {field_logical} set")
+print(f"  Fetched {page} page(s); {len(acct_values)} accounts have {field_logical} set")
 
-# Query 2: ALL contacts (no filter — get every contact regardless of parent type)
+# Query 2: ALL contacts — use Prefer header for pagination, not $top
 print("  Getting ALL contacts...")
 all_contacts = []
 url = f"{DYNAMICS_URL}/api/data/v9.2/contacts"
-params = {
-    "$select": f"contactid,{field_logical},_parentcustomerid_value",
-    "$top": 5000,
-}
+params = {"$select": f"contactid,{field_logical},_parentcustomerid_value"}
+page = 0
 while url:
-    r = requests.get(url, headers=get_headers(), params=params, timeout=60)
+    r = requests.get(url, headers=get_headers(PAGE_HEADERS), params=params, timeout=60)
     if not r.ok:
         print(f"  ERROR fetching contacts: {r.status_code} {r.text[:300]}")
         exit(1)
     data = r.json()
     all_contacts.extend(data.get("value", []))
+    page += 1
     url = data.get("@odata.nextLink")
     params = None
     time.sleep(0.3)
-print(f"  Total contacts fetched: {len(all_contacts)}")
+print(f"  Fetched {page} page(s); {len(all_contacts)} total contacts")
 
 # Cross-reference in Python — detailed breakdown
 no_parent = matched_acct = already_synced = needs_update = unmatched = 0
