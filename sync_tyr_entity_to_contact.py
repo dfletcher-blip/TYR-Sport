@@ -128,64 +128,64 @@ else:
     # 2c. Resolve option set for Picklist / MultiSelectPicklist
     if "Picklist" in field_odata_type or "MultiSelectPicklist" in field_odata_type:
         os_resolved = False
+        cast = (
+            "Microsoft.Dynamics.CRM.MultiSelectPicklistAttributeMetadata"
+            if "MultiSelectPicklist" in field_odata_type
+            else "Microsoft.Dynamics.CRM.PicklistAttributeMetadata"
+        )
 
-        # Method 1: GlobalOptionSetName is a direct string property on the attribute
-        global_os_name = meta.get("GlobalOptionSetName") or meta.get("OptionSetName")
-        print(f"  GlobalOptionSetName from meta: {global_os_name!r}")
-        if global_os_name:
-            payload["GlobalOptionSet"] = {
-                "@odata.type": "Microsoft.Dynamics.CRM.OptionSetMetadata",
-                "Name": global_os_name,
-            }
-            os_resolved = True
-            print(f"  -> Using GlobalOptionSet by name: {global_os_name}")
-
-        # Method 2: Cast navigation property /OptionSet
-        if not os_resolved:
-            cast = (
-                "Microsoft.Dynamics.CRM.MultiSelectPicklistAttributeMetadata"
-                if "MultiSelectPicklist" in field_odata_type
-                else "Microsoft.Dynamics.CRM.PicklistAttributeMetadata"
-            )
-            nav_url = (
-                f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='account')"
-                f"/Attributes(LogicalName='{field_logical}')/{cast}/OptionSet"
-            )
-            r_os = requests.get(nav_url, headers=get_headers(), timeout=30)
-            print(f"  Navigation OptionSet fetch: {r_os.status_code}")
-            if r_os.ok:
-                os_data = r_os.json()
+        # Use $expand=OptionSet via collection-level cast — confirmed working in diagnostic
+        r_os = requests.get(
+            f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='account')/Attributes/{cast}",
+            headers=get_headers(),
+            params={"$filter": f"LogicalName eq '{field_logical}'", "$expand": "OptionSet"},
+            timeout=30,
+        )
+        print(f"  OptionSet $expand fetch: {r_os.status_code}")
+        if r_os.ok:
+            items = r_os.json().get("value", [])
+            if items and items[0].get("OptionSet"):
+                os_data = items[0]["OptionSet"]
                 is_global = os_data.get("IsGlobal", False)
                 os_name = os_data.get("Name", "")
-                print(f"  -> IsGlobal={is_global}, Name={os_name!r}")
+                print(f"  IsGlobal={is_global}, Name={os_name!r}")
                 if is_global and os_name:
-                    payload["GlobalOptionSet"] = {
+                    # Correct payload key is "OptionSet" with IsGlobal=True (NOT "GlobalOptionSet")
+                    payload["OptionSet"] = {
                         "@odata.type": "Microsoft.Dynamics.CRM.OptionSetMetadata",
+                        "IsGlobal": True,
                         "Name": os_name,
                     }
+                    os_resolved = True
+                    print(f"  -> OptionSet resolved: {os_name}")
                 else:
-                    # Local: strip read-only metadata fields before reusing
+                    # Local option set — copy definition, strip read-only fields
                     strip = {"MetadataId", "@odata.context", "@odata.type", "HasChanged",
                              "IsCustomOptionSet", "IsManaged", "IsCustomizable"}
                     os_copy = {k: v for k, v in os_data.items() if k not in strip}
                     os_copy["@odata.type"] = "Microsoft.Dynamics.CRM.OptionSetMetadata"
                     payload["OptionSet"] = os_copy
-                os_resolved = True
+                    os_resolved = True
+                    print(f"  -> Local OptionSet copied ({len(os_data.get('Options',[]))} options)")
             else:
-                print(f"  Navigation fetch failed: {r_os.text[:200]}")
+                print(f"  No OptionSet in $expand response: {r_os.text[:200]}")
+        else:
+            print(f"  $expand fetch failed: {r_os.text[:200]}")
 
-        # Method 3: Try GlobalOptionSetDefinitions by field name (often same name)
+        # Fallback: GlobalOptionSetDefinitions filtered by name
         if not os_resolved:
-            gos_name = field_logical  # most global option sets share the field logical name
+            gos_name = field_logical
             r_gos = requests.get(
-                f"{DYNAMICS_URL}/api/data/v9.2/GlobalOptionSetDefinitions(Name='{gos_name}')",
+                f"{DYNAMICS_URL}/api/data/v9.2/GlobalOptionSetDefinitions",
                 headers=get_headers(),
+                params={"$filter": f"Name eq '{gos_name}'", "$select": "Name,MetadataId"},
                 timeout=30,
             )
-            print(f"  GlobalOptionSetDefinitions by name '{gos_name}': {r_gos.status_code}")
-            if r_gos.ok:
-                payload["GlobalOptionSet"] = {
+            print(f"  GlobalOptionSetDefinitions filter '{gos_name}': {r_gos.status_code}")
+            if r_gos.ok and r_gos.json().get("value"):
+                payload["OptionSet"] = {
                     "@odata.type": "Microsoft.Dynamics.CRM.OptionSetMetadata",
+                    "IsGlobal": True,
                     "Name": gos_name,
                 }
                 os_resolved = True
