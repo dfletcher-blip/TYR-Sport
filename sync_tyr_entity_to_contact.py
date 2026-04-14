@@ -28,26 +28,35 @@ def get_headers(extra=None):
 
 # Step 1: Find TYR entity field on Account
 print("Step 1: Searching for 'entity' field on Account...")
-r = requests.get(
-    f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='account')/Attributes",
-    headers=get_headers({"Accept": "application/json"}),
-    params={"$filter": "contains(LogicalName,'entit') or contains(DisplayName/UserLocalizedLabel/Label,'ntit')", "$select": "LogicalName,DisplayName,AttributeType,SchemaName"},
-    timeout=30,
-)
-acct_fields = r.json().get("value", [])
-tyr_entity_fields = [f for f in acct_fields if "tyr" in f.get("LogicalName","").lower() and "entit" in f.get("LogicalName","").lower()]
+all_acct_fields = []
+url = f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='account')/Attributes"
+params = {"$select": "LogicalName,DisplayName,AttributeType,SchemaName", "$top": 500}
+while url:
+    r = requests.get(url, headers=get_headers(), params=params, timeout=30)
+    all_acct_fields.extend(r.json().get("value", []))
+    url = r.json().get("@odata.nextLink")
+    params = None
+
+def label(f):
+    return (f.get("DisplayName") or {}).get("UserLocalizedLabel", {}).get("Label", "").lower()
+
+tyr_entity_fields = [
+    f for f in all_acct_fields
+    if ("tyr" in f.get("LogicalName","").lower() and "entit" in f.get("LogicalName","").lower())
+    or ("tyr" in label(f) and "entit" in label(f))
+]
 print(f"  Found {len(tyr_entity_fields)} TYR entity field(s) on Account:")
 for f in tyr_entity_fields:
     print(f"  LogicalName: {f['LogicalName']}")
-    print(f"  DisplayName: {f.get('DisplayName',{}).get('UserLocalizedLabel',{}).get('Label','')}")
+    print(f"  DisplayName: {label(f)}")
     print(f"  Type:        {f['AttributeType']}")
 print()
 
 if not tyr_entity_fields:
-    print("No TYR entity field found. Listing all TYR fields on Account:")
-    all_tyr = [f for f in acct_fields if "tyr" in f.get("LogicalName","").lower()]
+    print("No TYR entity field found by name. Listing ALL TYR fields on Account:")
+    all_tyr = [f for f in all_acct_fields if "tyr" in f.get("LogicalName","").lower()]
     for f in all_tyr:
-        print(f"  {f['LogicalName']} ({f['AttributeType']})")
+        print(f"  {f['LogicalName']:40s} ({f['AttributeType']:20s}) — {label(f)}")
     exit(0)
 
 field = tyr_entity_fields[0]
