@@ -98,7 +98,8 @@ if r2.ok:
     print(f"  Field '{field_logical}' already exists on Contact — skipping creation.\n")
 else:
     print(f"  Field '{field_logical}' not on Contact — creating it...")
-    # Get full metadata from Account field
+
+    # 2a. Fetch attribute metadata
     r_meta = requests.get(
         f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='account')/Attributes(LogicalName='{field_logical}')",
         headers=get_headers(),
@@ -106,44 +107,98 @@ else:
     )
     meta = r_meta.json()
     field_odata_type = meta.get("@odata.type", "")
+    print(f"  odata.type: {field_odata_type}")
+    # Show all non-system keys for debugging
+    user_keys = {k: v for k, v in meta.items() if not k.startswith("@") and v is not None}
+    print(f"  Meta properties: {list(user_keys.keys())}")
 
-    # Build create payload based on type
+    # 2b. Base payload
     payload = {
         "@odata.type": field_odata_type,
         "LogicalName": field_logical,
         "SchemaName": field_schema,
         "DisplayName": meta.get("DisplayName"),
-        "RequiredLevel": {"Value": "None", "CanBeChanged": True, "ManagedPropertyLogicalName": "canmodifyrequirementlevelsettings"},
-        "IsValidForAdvancedFind": {"Value": True, "CanBeChanged": True, "ManagedPropertyLogicalName": "canmodifysearchsettings"},
+        "RequiredLevel": {
+            "Value": "None",
+            "CanBeChanged": True,
+            "ManagedPropertyLogicalName": "canmodifyrequirementlevelsettings",
+        },
     }
+
+    # 2c. Resolve option set for Picklist / MultiSelectPicklist
     if "Picklist" in field_odata_type or "MultiSelectPicklist" in field_odata_type:
-        # Fetch OptionSet via navigation property
-        if "MultiSelectPicklist" in field_odata_type:
-            nav = "Microsoft.Dynamics.CRM.MultiSelectPicklistAttributeMetadata/OptionSet"
-        else:
-            nav = "Microsoft.Dynamics.CRM.PicklistAttributeMetadata/OptionSet"
-        r_os = requests.get(
-            f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='account')/Attributes(LogicalName='{field_logical}')/{nav}",
-            headers=get_headers(),
-            timeout=30,
-        )
-        if r_os.ok:
-            option_set = r_os.json()
-            is_global = option_set.get("IsGlobal", False)
-            os_name = option_set.get("Name", "")
-            print(f"  OptionSet: name={os_name}, IsGlobal={is_global}")
-            if is_global and os_name:
-                # Reference the global option set by name only
-                payload["OptionSet"] = {
-                    "@odata.type": "Microsoft.Dynamics.CRM.OptionSetMetadata",
-                    "Name": os_name,
-                    "IsGlobal": True,
-                }
+        os_resolved = False
+
+        # Method 1: GlobalOptionSetName is a direct string property on the attribute
+        global_os_name = meta.get("GlobalOptionSetName") or meta.get("OptionSetName")
+        print(f"  GlobalOptionSetName from meta: {global_os_name!r}")
+        if global_os_name:
+            payload["GlobalOptionSet"] = {
+                "@odata.type": "Microsoft.Dynamics.CRM.OptionSetMetadata",
+                "Name": global_os_name,
+            }
+            os_resolved = True
+            print(f"  -> Using GlobalOptionSet by name: {global_os_name}")
+
+        # Method 2: Cast navigation property /OptionSet
+        if not os_resolved:
+            cast = (
+                "Microsoft.Dynamics.CRM.MultiSelectPicklistAttributeMetadata"
+                if "MultiSelectPicklist" in field_odata_type
+                else "Microsoft.Dynamics.CRM.PicklistAttributeMetadata"
+            )
+            nav_url = (
+                f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='account')"
+                f"/Attributes(LogicalName='{field_logical}')/{cast}/OptionSet"
+            )
+            r_os = requests.get(nav_url, headers=get_headers(), timeout=30)
+            print(f"  Navigation OptionSet fetch: {r_os.status_code}")
+            if r_os.ok:
+                os_data = r_os.json()
+                is_global = os_data.get("IsGlobal", False)
+                os_name = os_data.get("Name", "")
+                print(f"  -> IsGlobal={is_global}, Name={os_name!r}")
+                if is_global and os_name:
+                    payload["GlobalOptionSet"] = {
+                        "@odata.type": "Microsoft.Dynamics.CRM.OptionSetMetadata",
+                        "Name": os_name,
+                    }
+                else:
+                    # Local: strip read-only metadata fields before reusing
+                    strip = {"MetadataId", "@odata.context", "@odata.type", "HasChanged",
+                             "IsCustomOptionSet", "IsManaged", "IsCustomizable"}
+                    os_copy = {k: v for k, v in os_data.items() if k not in strip}
+                    os_copy["@odata.type"] = "Microsoft.Dynamics.CRM.OptionSetMetadata"
+                    payload["OptionSet"] = os_copy
+                os_resolved = True
             else:
-                # Local option set — copy the full definition
-                payload["OptionSet"] = option_set
-        else:
-            print(f"  WARNING: Could not fetch OptionSet: {r_os.status_code} {r_os.text[:200]}")
+                print(f"  Navigation fetch failed: {r_os.text[:200]}")
+
+        # Method 3: Try GlobalOptionSetDefinitions by field name (often same name)
+        if not os_resolved:
+            gos_name = field_logical  # most global option sets share the field logical name
+            r_gos = requests.get(
+                f"{DYNAMICS_URL}/api/data/v9.2/GlobalOptionSetDefinitions(Name='{gos_name}')",
+                headers=get_headers(),
+                timeout=30,
+            )
+            print(f"  GlobalOptionSetDefinitions by name '{gos_name}': {r_gos.status_code}")
+            if r_gos.ok:
+                payload["GlobalOptionSet"] = {
+                    "@odata.type": "Microsoft.Dynamics.CRM.OptionSetMetadata",
+                    "Name": gos_name,
+                }
+                os_resolved = True
+                print(f"  -> Found global option set by name: {gos_name}")
+
+        if not os_resolved:
+            print("  ERROR: Could not resolve OptionSet by any method. Cannot create Picklist field.")
+            print("  Options:")
+            print("    1. Add the field manually in Dynamics 365 customisation UI.")
+            print("    2. Check the global option set name and set TYR_ENTITY_FIELD or hardcode.")
+            exit(1)
+
+    print(f"  Payload keys: {list(payload.keys())}")
 
     r_create = requests.post(
         f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='contact')/Attributes",
@@ -153,17 +208,16 @@ else:
     )
     if r_create.ok or r_create.status_code == 204:
         print(f"  Created '{field_logical}' on Contact.\n")
-        # Publish
         print("  Publishing customizations...")
         r_pub = requests.post(
             f"{DYNAMICS_URL}/api/data/v9.2/PublishXml",
             headers=get_headers(),
-            json={"ParameterXml": f"<importexportxml><entities><entity>contact</entity></entities></importexportxml>"},
+            json={"ParameterXml": "<importexportxml><entities><entity>contact</entity></entities></importexportxml>"},
             timeout=60,
         )
         print(f"  Publish response: {r_pub.status_code}\n")
     else:
-        print(f"  FAILED to create: {r_create.status_code} {r_create.text[:500]}")
+        print(f"  FAILED to create: {r_create.status_code} {r_create.text[:800]}")
         exit(1)
 
 # Step 3: Sync values from Account to Contact
