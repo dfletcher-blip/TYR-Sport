@@ -259,7 +259,8 @@ while url:
 print(f"  Total contacts fetched: {len(all_contacts)}")
 
 # Cross-reference in Python — detailed breakdown
-no_parent = matched_acct = already_synced = needs_update = 0
+no_parent = matched_acct = already_synced = needs_update = unmatched = 0
+unmatched_parent_samples = []
 to_update = []
 for c in all_contacts:
     parent_id = c.get("_parentcustomerid_value")
@@ -268,7 +269,10 @@ for c in all_contacts:
         continue
     acct_val = acct_values.get(parent_id)
     if acct_val is None:
-        continue  # parent is a Contact, or account has no value
+        unmatched += 1
+        if len(unmatched_parent_samples) < 5:
+            unmatched_parent_samples.append((c["contactid"], parent_id, c.get(field_logical)))
+        continue
     matched_acct += 1
     contact_val = c.get(field_logical)
     if acct_val == contact_val:
@@ -277,10 +281,28 @@ for c in all_contacts:
         needs_update += 1
         to_update.append({"contactid": c["contactid"], field_logical: acct_val})
 
-print(f"  Contacts with no parent:                {no_parent}")
-print(f"  Contacts matched to an account w/value: {matched_acct}")
-print(f"  Already in sync:                        {already_synced}")
-print(f"  Need update:                            {needs_update}\n")
+print(f"  Contacts with no parent ID:             {no_parent}")
+print(f"  Contacts whose parent has no value:     {unmatched}")
+print(f"  Contacts matched to account w/value:    {matched_acct}")
+print(f"    Already in sync:                      {already_synced}")
+print(f"    Need update:                          {needs_update}")
+
+if unmatched_parent_samples:
+    print(f"\n  Sample unmatched contacts (parent ID not in account dict):")
+    for cid, pid, cval in unmatched_parent_samples:
+        # Look up the account directly to see its value
+        ra = requests.get(
+            f"{DYNAMICS_URL}/api/data/v9.2/accounts({pid})",
+            headers=get_headers(),
+            params={"$select": f"accountid,name,{field_logical}"},
+            timeout=15,
+        )
+        if ra.ok:
+            a = ra.json()
+            print(f"    Contact {cid[:8]}... → Account '{a.get('name')}' ({field_logical}={a.get(field_logical)!r}), contact has {cval!r}")
+        else:
+            print(f"    Contact {cid[:8]}... → parent {pid[:8]}... (account fetch: {ra.status_code}), contact has {cval!r}")
+print()
 
 if not to_update:
     print("All contacts already in sync.")
