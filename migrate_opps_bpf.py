@@ -124,37 +124,35 @@ else:
     print(f"  First stage: {target_stages[0]['stagename']} ({first_stage_id})\n")
 
 # ── Step 3: Find all open opportunities on old BPF ──────────────────────────
-print("Step 3: Finding opportunities on old BPF...")
-all_opps = []
+print("Step 3: Fetching all open opportunities (filtering by processid in Python)...")
+all_open = []
 url = f"{DYNAMICS_URL}/api/data/v9.2/opportunities"
-params = {
-    "$select": "opportunityid,name,stageid",
-    "$filter": f"processid eq {old_bpf_id} and statecode eq 0",
-}
+params = {"$select": "opportunityid,name,stageid,processid", "$filter": "statecode eq 0"}
+page = 0
 while url:
-    r = requests.get(url, headers=get_headers(), params=params, timeout=30)
+    r = requests.get(url, headers=get_headers({"Prefer": "odata.maxpagesize=5000"}),
+                     params=params, timeout=60)
     if not r.ok:
         print(f"  Error: {r.status_code} {r.text[:300]}")
-        # Try fetching a sample opp to check real field names
-        r2 = requests.get(f"{DYNAMICS_URL}/api/data/v9.2/opportunities",
-            headers=get_headers(), params={"$top": 1}, timeout=15)
-        if r2.ok and r2.json().get("value"):
-            opp = r2.json()["value"][0]
-            r_full = requests.get(
-                f"{DYNAMICS_URL}/api/data/v9.2/opportunities({opp['opportunityid']})",
-                headers=get_headers(), timeout=15)
-            if r_full.ok:
-                proc_fields = {k: v for k, v in r_full.json().items()
-                              if any(x in k.lower() for x in ["process","stage","bpf"])
-                              and not k.startswith("@")}
-                print(f"  Sample opp process/stage fields: {proc_fields}")
         exit(1)
     data = r.json()
-    all_opps.extend(data.get("value", []))
+    all_open.extend(data.get("value", []))
+    page += 1
     url = data.get("@odata.nextLink")
     params = None
+    time.sleep(0.3)
 
-print(f"  Found {len(all_opps)} open opportunities on old BPF\n")
+# Show processid distribution to confirm we're matching correctly
+from collections import Counter
+pid_counts = Counter(o.get("processid") for o in all_open)
+print(f"  Fetched {len(all_open)} open opps across {page} page(s)")
+print(f"  Process ID distribution (top 5):")
+for pid, cnt in pid_counts.most_common(5):
+    label = "(old BPF)" if pid == old_bpf_id else ""
+    print(f"    {pid}: {cnt} opps {label}")
+
+all_opps = [o for o in all_open if o.get("processid") == old_bpf_id]
+print(f"\n  Opportunities on old BPF: {len(all_opps)}\n")
 if not all_opps:
     print("  Nothing to migrate.")
     exit(0)
