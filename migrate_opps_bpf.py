@@ -129,7 +129,7 @@ all_opps = []
 url = f"{DYNAMICS_URL}/api/data/v9.2/opportunities"
 params = {
     "$select": "opportunityid,name,stageid",
-    "$filter": f"_processid_value eq {old_bpf_id} and statecode eq 0",
+    "$filter": f"processid eq {old_bpf_id} and statecode eq 0",
 }
 while url:
     r = requests.get(url, headers=get_headers(), params=params, timeout=30)
@@ -140,10 +140,14 @@ while url:
             headers=get_headers(), params={"$top": 1}, timeout=15)
         if r2.ok and r2.json().get("value"):
             opp = r2.json()["value"][0]
-            proc_fields = {k: v for k, v in opp.items()
-                          if any(x in k.lower() for x in ["process","stage","bpf"])
-                          and not k.startswith("@")}
-            print(f"  Sample opp process/stage fields: {proc_fields}")
+            r_full = requests.get(
+                f"{DYNAMICS_URL}/api/data/v9.2/opportunities({opp['opportunityid']})",
+                headers=get_headers(), timeout=15)
+            if r_full.ok:
+                proc_fields = {k: v for k, v in r_full.json().items()
+                              if any(x in k.lower() for x in ["process","stage","bpf"])
+                              and not k.startswith("@")}
+                print(f"  Sample opp process/stage fields: {proc_fields}")
         exit(1)
     data = r.json()
     all_opps.extend(data.get("value", []))
