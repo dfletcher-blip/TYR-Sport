@@ -1,7 +1,10 @@
 """
 Sync tyr_tyrentity AND tyr_tyrtype from Account to Contact in one pass.
-Fetches all accounts and contacts once, cross-references by parent account ID,
-then batch PATCHes any contacts where either field is out of sync.
+
+Pre-flight: verifies both fields exist on Contact, creating any that are
+missing (with proper GlobalOptionSet@odata.bind for Picklist/MultiSelectPicklist).
+Then fetches all accounts and contacts once, cross-references by parent account
+ID, and batch-PATCHes any contacts where either field is out of sync.
 """
 import os, json, uuid, time, requests
 from requests.adapters import HTTPAdapter
@@ -55,6 +58,136 @@ def fetch_all(entity, select_fields, extra_filter=None):
         time.sleep(0.2)
     print(f"  {entity}: {len(records)} records ({page} page(s))")
     return records
+
+def ensure_field_on_contact(field_logical):
+    """Check field exists on Contact. If not, copy metadata from Account and create it."""
+    r = _session.get(
+        f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='contact')"
+        f"/Attributes(LogicalName='{field_logical}')",
+        headers=get_headers(), timeout=30,
+    )
+    if r.ok:
+        print(f"  '{field_logical}' already exists on Contact — OK")
+        return True
+
+    print(f"  '{field_logical}' NOT on Contact — fetching Account metadata to create it...")
+
+    # Fetch attribute metadata from Account
+    r_meta = _session.get(
+        f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='account')"
+        f"/Attributes(LogicalName='{field_logical}')",
+        headers=get_headers(), timeout=30,
+    )
+    if not r_meta.ok:
+        print(f"  ERROR: Cannot fetch '{field_logical}' metadata from Account: {r_meta.status_code}")
+        return False
+
+    meta = r_meta.json()
+    field_odata_type = meta.get("@odata.type", "")
+    field_schema = meta.get("SchemaName", field_logical)
+    print(f"  odata.type: {field_odata_type}")
+
+    payload = {
+        "@odata.type": field_odata_type,
+        "LogicalName": field_logical,
+        "SchemaName": field_schema,
+        "DisplayName": meta.get("DisplayName"),
+        "RequiredLevel": {
+            "Value": "None",
+            "CanBeChanged": True,
+            "ManagedPropertyLogicalName": "canmodifyrequirementlevelsettings",
+        },
+    }
+
+    # Handle Picklist / MultiSelectPicklist — must bind option set
+    if "Picklist" in field_odata_type or "MultiSelectPicklist" in field_odata_type:
+        cast = (
+            "Microsoft.Dynamics.CRM.MultiSelectPicklistAttributeMetadata"
+            if "MultiSelectPicklist" in field_odata_type
+            else "Microsoft.Dynamics.CRM.PicklistAttributeMetadata"
+        )
+        r_os = _session.get(
+            f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='account')/Attributes/{cast}",
+            headers=get_headers(),
+            params={"$filter": f"LogicalName eq '{field_logical}'", "$expand": "OptionSet"},
+            timeout=30,
+        )
+        print(f"  OptionSet $expand fetch: {r_os.status_code}")
+        os_resolved = False
+
+        if r_os.ok:
+            items = r_os.json().get("value", [])
+            if items and items[0].get("OptionSet"):
+                os_data = items[0]["OptionSet"]
+                is_global = os_data.get("IsGlobal", False)
+                os_name = os_data.get("Name", "")
+                metadata_id = os_data.get("MetadataId", "")
+                print(f"  IsGlobal={is_global}, Name={os_name!r}, MetadataId={metadata_id}")
+                if is_global and metadata_id:
+                    payload["GlobalOptionSet@odata.bind"] = f"/GlobalOptionSetDefinitions({metadata_id})"
+                    os_resolved = True
+                    print(f"  -> Bound to global OptionSet: {os_name} ({metadata_id})")
+                else:
+                    # Local option set — copy definition, strip read-only fields
+                    strip = {"MetadataId", "@odata.context", "@odata.type", "HasChanged",
+                             "IsCustomOptionSet", "IsManaged", "IsCustomizable"}
+                    os_copy = {k: v for k, v in os_data.items() if k not in strip}
+                    os_copy["@odata.type"] = "Microsoft.Dynamics.CRM.OptionSetMetadata"
+                    payload["OptionSet"] = os_copy
+                    os_resolved = True
+                    print(f"  -> Local OptionSet copied ({len(os_data.get('Options', []))} options)")
+
+        if not os_resolved:
+            # Fallback: search GlobalOptionSetDefinitions by field name
+            for gos_name in [field_logical, field_schema.lower()]:
+                r_gos = _session.get(
+                    f"{DYNAMICS_URL}/api/data/v9.2/GlobalOptionSetDefinitions",
+                    headers=get_headers(),
+                    params={"$filter": f"Name eq '{gos_name}'", "$select": "Name,MetadataId"},
+                    timeout=30,
+                )
+                if r_gos.ok and r_gos.json().get("value"):
+                    mid = r_gos.json()["value"][0]["MetadataId"]
+                    payload["GlobalOptionSet@odata.bind"] = f"/GlobalOptionSetDefinitions({mid})"
+                    os_resolved = True
+                    print(f"  -> Fallback bound to global OptionSet: {gos_name} ({mid})")
+                    break
+
+        if not os_resolved:
+            print(f"  ERROR: Could not resolve OptionSet for '{field_logical}'. Add it manually in Dynamics 365.")
+            return False
+
+    print(f"  Creating '{field_logical}' on Contact...")
+    r_create = _session.post(
+        f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='contact')/Attributes",
+        headers=get_headers(),
+        json=payload,
+        timeout=60,
+    )
+    if r_create.ok or r_create.status_code == 204:
+        print(f"  Created '{field_logical}' on Contact.")
+        print(f"  Publishing customizations...")
+        r_pub = _session.post(
+            f"{DYNAMICS_URL}/api/data/v9.2/PublishXml",
+            headers=get_headers(),
+            json={"ParameterXml": "<importexportxml><entities><entity>contact</entity></entities></importexportxml>"},
+            timeout=60,
+        )
+        print(f"  Publish: {r_pub.status_code}")
+        time.sleep(3)  # Give the platform a moment to register the new field
+        return True
+    else:
+        print(f"  FAILED to create '{field_logical}': {r_create.status_code} {r_create.text[:800]}")
+        return False
+
+# ── Pre-flight: ensure both fields exist on Contact ──────────────────────────
+print("Pre-flight: Verifying fields exist on Contact...")
+for field in FIELDS:
+    ok = ensure_field_on_contact(field)
+    if not ok:
+        print(f"\nAbort: cannot proceed without '{field}' on Contact.")
+        exit(1)
+print()
 
 # ── Step 1: Fetch all accounts ───────────────────────────────────────────────
 print("Step 1: Fetching all accounts...")
@@ -141,14 +274,15 @@ for batch_num, start in enumerate(range(0, len(to_update), BATCH_SIZE), 1):
         errors += fail
         print(f"  Batch {batch_num}/{total_batches}: {ok} updated, {fail} errors")
         if fail:
-            first_err = next((l.strip() for l in resp.text.splitlines()
-                              if '"message"' in l), "")
-            if first_err:
-                print(f"    {first_err}")
+            # Print first error detail found in multipart response
+            err_lines = [l.strip() for l in resp.text.splitlines()
+                         if '"message"' in l or '"errorcode"' in l]
+            for el in err_lines[:2]:
+                print(f"    {el}")
     else:
         errors += len(batch)
         first_err = next((l.strip() for l in resp.text.splitlines()
-                          if '"message"' in l or "HTTP/1.1 4" in l), resp.text[:200])
+                          if '"message"' in l or "HTTP/1.1 4" in l), resp.text[:300])
         print(f"  Batch {batch_num}/{total_batches} FAILED: {resp.status_code} — {first_err}")
     time.sleep(1)
 
