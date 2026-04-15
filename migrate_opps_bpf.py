@@ -8,11 +8,24 @@ This script finds those instances, extracts the opportunity IDs, then patches
 processid + stageid on each opportunity to switch it to the target BPF.
 """
 import os, uuid, time, requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from dotenv import load_dotenv
 load_dotenv()
 from config.crm_connection import get_access_token
 
 DYNAMICS_URL = os.getenv("DYNAMICS_URL", "").rstrip("/")
+
+def make_session():
+    s = requests.Session()
+    retry = Retry(total=4, backoff_factor=3,
+                  status_forcelist=[429, 500, 502, 503, 504],
+                  allowed_methods=["GET", "POST", "PATCH"])
+    s.mount("https://", HTTPAdapter(max_retries=retry))
+    s.mount("http://",  HTTPAdapter(max_retries=retry))
+    return s
+
+_session = make_session()
 
 _token = {"value": None, "expires": 0}
 
@@ -28,7 +41,7 @@ def get_headers(extra=None):
     return h
 
 def get_stages(bpf_id):
-    r = requests.get(f"{DYNAMICS_URL}/api/data/v9.2/processstages",
+    r = _session.get(f"{DYNAMICS_URL}/api/data/v9.2/processstages",
         headers=get_headers(),
         params={"$select": "processstageid,stagename,primaryentitytypecode",
                 "$filter": f"_processid_value eq {bpf_id}"},
@@ -37,7 +50,7 @@ def get_stages(bpf_id):
 
 # ── Step 1: Find the old BPF and its instance entity name ───────────────────
 print("Step 1: Finding old Lead-to-Opportunity BPF...")
-resp = requests.get(f"{DYNAMICS_URL}/api/data/v9.2/workflows",
+resp = _session.get(f"{DYNAMICS_URL}/api/data/v9.2/workflows",
     headers=get_headers(),
     params={"$select": "workflowid,name,uniquename,primaryentity",
             "$filter": "category eq 4 and contains(name,'Lead to Opportunity') and statecode eq 1",
@@ -59,7 +72,7 @@ print(f"  Entity set:  {entity_set}\n")
 
 # ── Step 2: Probe BPF instance entity to find field names ───────────────────
 print("Step 2: Probing BPF instance entity...")
-r_probe = requests.get(f"{DYNAMICS_URL}/api/data/v9.2/{entity_set}",
+r_probe = _session.get(f"{DYNAMICS_URL}/api/data/v9.2/{entity_set}",
     headers=get_headers(), params={"$top": 2}, timeout=30)
 print(f"  Status: {r_probe.status_code}")
 
@@ -79,7 +92,7 @@ if r_probe.ok:
         print("  No instances found in entity.")
 else:
     # Try alternate entity set name (without trailing 'es')
-    r_probe2 = requests.get(f"{DYNAMICS_URL}/api/data/v9.2/{unique_name}",
+    r_probe2 = _session.get(f"{DYNAMICS_URL}/api/data/v9.2/{unique_name}",
         headers=get_headers(), params={"$top": 2}, timeout=30)
     print(f"  Alternate ({unique_name}) status: {r_probe2.status_code}")
     if r_probe2.ok:
@@ -102,7 +115,7 @@ if not opp_field:
 
 # ── Step 3: Find target opportunity BPF ─────────────────────────────────────
 print("Step 3: Finding active BPFs with opportunity stages...")
-resp2 = requests.get(f"{DYNAMICS_URL}/api/data/v9.2/workflows",
+resp2 = _session.get(f"{DYNAMICS_URL}/api/data/v9.2/workflows",
     headers=get_headers(),
     params={"$select": "workflowid,name", "$filter": "category eq 4 and statecode eq 1"},
     timeout=30)
@@ -139,7 +152,7 @@ url = f"{DYNAMICS_URL}/api/data/v9.2/{entity_set}"
 params = {"$select": opp_field}
 page = 0
 while url:
-    r = requests.get(url, headers=get_headers({"Prefer": "odata.maxpagesize=5000"}),
+    r = _session.get(url, headers=get_headers({"Prefer": "odata.maxpagesize=5000"}),
                      params=params, timeout=60)
     if not r.ok:
         print(f"  Error: {r.status_code} {r.text[:300]}")
@@ -167,7 +180,7 @@ print(f"  First 3 opportunity IDs: {opp_ids[:3]}")
 
 # Test single PATCH first to catch errors before running full batch
 print("  Testing single PATCH on first opportunity...")
-r_test = requests.patch(
+r_test = _session.patch(
     f"{DYNAMICS_URL}/api/data/v9.2/opportunities({opp_ids[0]})",
     headers={**get_headers(), "If-Match": "*"},
     json={"processid": target_id, "stageid": first_stage},
@@ -179,7 +192,7 @@ if not r_test.ok:
     print("\n  Fix the error above before running the full batch.")
     exit(1)
 print("  Test PATCH succeeded — running full batch...\n")
-BATCH_SIZE = 50
+BATCH_SIZE = 20
 updated = errors = 0
 total_batches = (len(opp_ids) + BATCH_SIZE - 1) // BATCH_SIZE
 
@@ -197,7 +210,7 @@ for batch_num, start in enumerate(range(0, len(opp_ids), BATCH_SIZE), 1):
             f"Content-Type: application/json\r\nIf-Match: *\r\n\r\n{payload}\r\n"
         )
     body = "".join(parts) + f"--{boundary}--\r\n"
-    resp = requests.post(f"{DYNAMICS_URL}/api/data/v9.2/$batch",
+    resp = _session.post(f"{DYNAMICS_URL}/api/data/v9.2/$batch",
         headers={**get_headers(), "Content-Type": f"multipart/mixed; boundary={boundary}"},
         data=body.encode("utf-8"), timeout=120)
     if resp.ok:
@@ -229,7 +242,7 @@ url = f"{DYNAMICS_URL}/api/data/v9.2/opportunities"
 params = {"$select": "opportunityid,name,processid", "$filter": "statecode eq 0"}
 page = 0
 while url:
-    r = requests.get(url, headers=get_headers({"Prefer": "odata.maxpagesize=5000"}),
+    r = _session.get(url, headers=get_headers({"Prefer": "odata.maxpagesize=5000"}),
                      params=params, timeout=60)
     if not r.ok:
         print(f"  Error fetching opportunities: {r.status_code} {r.text[:200]}")
@@ -271,7 +284,7 @@ for batch_num, start in enumerate(range(0, len(remaining), BATCH_SIZE), 1):
             f"Content-Type: application/json\r\nIf-Match: *\r\n\r\n{payload}\r\n"
         )
     body = "".join(parts) + f"--{boundary}--\r\n"
-    resp = requests.post(f"{DYNAMICS_URL}/api/data/v9.2/$batch",
+    resp = _session.post(f"{DYNAMICS_URL}/api/data/v9.2/$batch",
         headers={**get_headers(), "Content-Type": f"multipart/mixed; boundary={boundary}"},
         data=body.encode("utf-8"), timeout=120)
     if resp.ok:
