@@ -1,10 +1,10 @@
 """
-Migrate opportunities from old Lead-to-Opportunity BPF to the Copy BPF.
-Opportunities inherit the BPF from the lead that created them — any lead
-still on the old BPF will create opportunities on the old BPF.
+Migrate opportunities from old Lead-to-Opportunity BPF to the correct
+opportunity BPF (the one applied when creating opportunities manually).
 
-Stage mapping (opportunity side of BPF):
-  Old → New  (names discovered at runtime from processstages API)
+The new Copy BPF is lead-only — it has no opportunity stages.
+This script finds all active BPFs that cover opportunities, identifies
+the target, and migrates opportunities off the old cross-entity BPF.
 """
 import os, uuid, time, requests
 from dotenv import load_dotenv
@@ -30,36 +30,6 @@ def get_headers(extra=None):
         h.update(extra)
     return h
 
-# ── Step 1: Find both BPFs ───────────────────────────────────────────────────
-print("Step 1: Finding BPFs...")
-resp = requests.get(
-    f"{DYNAMICS_URL}/api/data/v9.2/workflows",
-    headers=get_headers(),
-    params={
-        "$select": "workflowid,name,createdon",
-        "$filter": "category eq 4 and contains(name,'Lead to Opportunity') and statecode eq 1",
-        "$orderby": "createdon asc",
-    },
-    timeout=30,
-)
-bpfs = resp.json().get("value", [])
-for b in bpfs:
-    print(f"  {b['name']} — {b['workflowid']}")
-
-old_bpf = next((b for b in bpfs if "(Copy)" not in b["name"]), None)
-new_bpf = next((b for b in bpfs if "(Copy)" in b["name"]), None)
-
-if not old_bpf or not new_bpf:
-    print("Could not find both BPFs. Exiting.")
-    exit(1)
-
-old_bpf_id = old_bpf["workflowid"]
-new_bpf_id = new_bpf["workflowid"]
-print(f"\n  Old: {old_bpf['name']} ({old_bpf_id})")
-print(f"  New: {new_bpf['name']} ({new_bpf_id})\n")
-
-# ── Step 2: Get stages for both BPFs ────────────────────────────────────────
-print("Step 2: Getting stages...")
 def get_stages(bpf_id):
     r = requests.get(
         f"{DYNAMICS_URL}/api/data/v9.2/processstages",
@@ -70,120 +40,123 @@ def get_stages(bpf_id):
         },
         timeout=30,
     )
-    stages = r.json().get("value", [])
-    return stages
+    return r.json().get("value", [])
+
+# ── Step 1: Find the old Lead-to-Opportunity BPF ────────────────────────────
+print("Step 1: Finding old Lead-to-Opportunity BPF...")
+resp = requests.get(
+    f"{DYNAMICS_URL}/api/data/v9.2/workflows",
+    headers=get_headers(),
+    params={
+        "$select": "workflowid,name,createdon",
+        "$filter": "category eq 4 and contains(name,'Lead to Opportunity') and statecode eq 1",
+        "$orderby": "createdon asc",
+    },
+    timeout=30,
+)
+lead_bpfs = resp.json().get("value", [])
+old_bpf = next((b for b in lead_bpfs if "(Copy)" not in b["name"]), None)
+if not old_bpf:
+    print("  Could not find old Lead to Opportunity BPF. Exiting.")
+    exit(1)
+old_bpf_id = old_bpf["workflowid"]
+print(f"  Old BPF: {old_bpf['name']} ({old_bpf_id})")
 
 old_stages = get_stages(old_bpf_id)
-new_stages = get_stages(new_bpf_id)
+old_opp_stages = [s for s in old_stages if s["primaryentitytypecode"] == "opportunity"]
+print(f"  Old opportunity stages: {[s['stagename'] for s in old_opp_stages]}\n")
 
-print(f"  Old BPF stages ({len(old_stages)}):")
-for s in old_stages:
-    print(f"    {s['stagename']:20s} ({s['primaryentitytypecode']:15s}) {s['processstageid']}")
+# ── Step 2: Find ALL active BPFs that have opportunity stages ───────────────
+print("Step 2: Finding all active BPFs with opportunity stages...")
+resp2 = requests.get(
+    f"{DYNAMICS_URL}/api/data/v9.2/workflows",
+    headers=get_headers(),
+    params={
+        "$select": "workflowid,name,createdon",
+        "$filter": "category eq 4 and statecode eq 1",
+    },
+    timeout=30,
+)
+all_bpfs = resp2.json().get("value", [])
+print(f"  Total active BPFs: {len(all_bpfs)}")
 
-print(f"\n  New BPF stages ({len(new_stages)}):")
-for s in new_stages:
-    print(f"    {s['stagename']:20s} ({s['primaryentitytypecode']:15s}) {s['processstageid']}")
+opp_bpfs = []
+for bpf in all_bpfs:
+    if bpf["workflowid"] == old_bpf_id:
+        continue  # skip the old one
+    stages = get_stages(bpf["workflowid"])
+    opp_stages = [s for s in stages if s["primaryentitytypecode"] == "opportunity"]
+    if opp_stages:
+        opp_bpfs.append({"bpf": bpf, "stages": opp_stages})
+        print(f"  Found: {bpf['name']}")
+        for s in opp_stages:
+            print(f"    {s['stagename']} ({s['processstageid']})")
+    time.sleep(0.2)
+
 print()
+if not opp_bpfs:
+    print("  No other active BPFs have opportunity stages.")
+    print("  The old BPF is the only one covering opportunities.")
+    print("  Options:")
+    print("    1. Create an Opportunity Sales Process BPF in Dynamics 365")
+    print("    2. Or remove the BPF from these opportunities entirely (patch processid to null)")
+    print()
+    ans = input("  Patch processid to null to detach old BPF? (yes/no): ").strip().lower()
+    if ans != "yes":
+        print("  Exiting — no changes made.")
+        exit(0)
+    target_bpf_id = None
+    target_stages = []
+else:
+    if len(opp_bpfs) == 1:
+        chosen = opp_bpfs[0]
+        print(f"  Using: {chosen['bpf']['name']}")
+    else:
+        print("  Multiple BPFs found. Choose target:")
+        for i, ob in enumerate(opp_bpfs):
+            print(f"    {i+1}. {ob['bpf']['name']}")
+        idx = int(input("  Enter number: ").strip()) - 1
+        chosen = opp_bpfs[idx]
+    target_bpf_id = chosen["bpf"]["workflowid"]
+    target_stages = chosen["stages"]
+    first_stage_id = target_stages[0]["processstageid"]
+    print(f"  Target BPF: {chosen['bpf']['name']} ({target_bpf_id})")
+    print(f"  First stage: {target_stages[0]['stagename']} ({first_stage_id})\n")
 
-# Opportunity stages only (primaryentitytypecode = 'opportunity')
-old_opp_stages = {s["stagename"].lower(): s["processstageid"]
-                  for s in old_stages if s["primaryentitytypecode"] == "opportunity"}
-new_opp_stages  = {s["stagename"].lower(): s["processstageid"]
-                  for s in new_stages if s["primaryentitytypecode"] == "opportunity"}
-
-print(f"  Old opportunity stages: {list(old_opp_stages.keys())}")
-print(f"  New opportunity stages: {list(new_opp_stages.keys())}")
-
-if not old_opp_stages or not new_opp_stages:
-    print("\n  WARNING: could not find opportunity-specific stages.")
-    print("  Falling back to all stages for both BPFs.")
-    old_opp_stages = {s["stagename"].lower(): s["processstageid"] for s in old_stages}
-    new_opp_stages  = {s["stagename"].lower(): s["processstageid"] for s in new_stages}
-
-# Map old stage ID → new stage ID by position (first old → first new, etc.)
-old_ids_ordered = [s["processstageid"] for s in old_stages
-                   if s["primaryentitytypecode"] in ("opportunity", "")]
-new_ids_ordered = [s["processstageid"] for s in new_stages
-                   if s["primaryentitytypecode"] in ("opportunity", "")]
-
-# Also build a name-based map for known stage names
-STAGE_NAME_MAP = {
-    "qualify":  None,
-    "develop":  None,
-    "propose":  None,
-    "close":    None,
-}
-for old_name in list(STAGE_NAME_MAP.keys()):
-    old_id = next((v for k, v in old_opp_stages.items() if old_name in k), None)
-    # Map to new stage by index position
-    if old_id and old_id in old_ids_ordered:
-        idx = old_ids_ordered.index(old_id)
-        new_id = new_ids_ordered[idx] if idx < len(new_ids_ordered) else None
-        STAGE_NAME_MAP[old_name] = (old_id, new_id)
-
-stage_id_map = {}  # old stage ID → new stage ID
-for name, val in STAGE_NAME_MAP.items():
-    if val:
-        old_id, new_id = val
-        if old_id and new_id:
-            stage_id_map[old_id] = new_id
-            print(f"  Mapped: {name} ({old_id[:8]}...) → ({new_id[:8]}...)")
-
-# Default: first new opportunity stage
-default_new_stage = next(iter(new_opp_stages.values()), None) if new_opp_stages else new_ids_ordered[0] if new_ids_ordered else None
-print(f"\n  Default new stage for unmapped: {default_new_stage}\n")
-
-# ── Step 3: Find opportunities on the old BPF ───────────────────────────────
+# ── Step 3: Find all open opportunities on old BPF ──────────────────────────
 print("Step 3: Finding opportunities on old BPF...")
 all_opps = []
 url = f"{DYNAMICS_URL}/api/data/v9.2/opportunities"
 params = {
-    "$select": "opportunityid,name,_stageid_value,stageid",
+    "$select": "opportunityid,name,stageid",
     "$filter": f"_processid_value eq {old_bpf_id} and statecode eq 0",
-    "$top": 1000,
 }
 while url:
     r = requests.get(url, headers=get_headers(), params=params, timeout=30)
-    data = r.json()
     if not r.ok:
         print(f"  Error: {r.status_code} {r.text[:300]}")
+        # Try fetching a sample opp to check real field names
+        r2 = requests.get(f"{DYNAMICS_URL}/api/data/v9.2/opportunities",
+            headers=get_headers(), params={"$top": 1}, timeout=15)
+        if r2.ok and r2.json().get("value"):
+            opp = r2.json()["value"][0]
+            proc_fields = {k: v for k, v in opp.items()
+                          if any(x in k.lower() for x in ["process","stage","bpf"])
+                          and not k.startswith("@")}
+            print(f"  Sample opp process/stage fields: {proc_fields}")
         exit(1)
+    data = r.json()
     all_opps.extend(data.get("value", []))
     url = data.get("@odata.nextLink")
     params = None
 
 print(f"  Found {len(all_opps)} open opportunities on old BPF\n")
-
 if not all_opps:
-    # Try without processid filter — show sample to diagnose
-    print("  Checking sample opportunities to diagnose BPF field name...")
-    r_sample = requests.get(
-        f"{DYNAMICS_URL}/api/data/v9.2/opportunities",
-        headers=get_headers(),
-        params={"$top": 2, "$select": "opportunityid,name"},
-        timeout=30,
-    )
-    if r_sample.ok and r_sample.json().get("value"):
-        opp = r_sample.json()["value"][0]
-        opp_id = opp["opportunityid"]
-        # Fetch full record to see process fields
-        r_full = requests.get(
-            f"{DYNAMICS_URL}/api/data/v9.2/opportunities({opp_id})",
-            headers=get_headers(),
-            timeout=30,
-        )
-        if r_full.ok:
-            fields = {k: v for k, v in r_full.json().items()
-                      if any(x in k.lower() for x in ["process", "stage", "bpf"])
-                      and not k.startswith("@")}
-            print(f"  Sample opp '{opp['name']}' process/stage fields:")
-            for k, v in fields.items():
-                print(f"    {k}: {v}")
-    print("\n  No opportunities to migrate.")
+    print("  Nothing to migrate.")
     exit(0)
 
 # ── Step 4: Batch migrate ────────────────────────────────────────────────────
-print("Step 4: Migrating opportunities to new BPF...")
+print("Step 4: Migrating...")
 BATCH_SIZE = 50
 updated = errors = 0
 total_batches = (len(all_opps) + BATCH_SIZE - 1) // BATCH_SIZE
@@ -193,13 +166,15 @@ for batch_num, start in enumerate(range(0, len(all_opps), BATCH_SIZE), 1):
     boundary = f"batch_{uuid.uuid4().hex}"
     parts = []
     for opp in batch:
-        old_stage_id = opp.get("_stageid_value") or opp.get("stageid")
-        new_stage_id = stage_id_map.get(old_stage_id, default_new_stage)
         oid = opp["opportunityid"]
-        payload = (
-            f'{{"processid@odata.bind":"/workflows({new_bpf_id})",'
-            f'"stageid@odata.bind":"/processstages({new_stage_id})"}}'
-        )
+        if target_bpf_id:
+            payload = (
+                f'{{"processid@odata.bind":"/workflows({target_bpf_id})",'
+                f'"stageid@odata.bind":"/processstages({first_stage_id})"}}'
+            )
+        else:
+            # Detach BPF entirely
+            payload = '{"processid":null,"stageid":null}'
         parts.append(
             f"--{boundary}\r\n"
             f"Content-Type: application/http\r\n"
@@ -210,7 +185,6 @@ for batch_num, start in enumerate(range(0, len(all_opps), BATCH_SIZE), 1):
             f"{payload}\r\n"
         )
     body = "".join(parts) + f"--{boundary}--\r\n"
-
     resp = requests.post(
         f"{DYNAMICS_URL}/api/data/v9.2/$batch",
         headers={**get_headers(), "Content-Type": f"multipart/mixed; boundary={boundary}"},
@@ -219,10 +193,9 @@ for batch_num, start in enumerate(range(0, len(all_opps), BATCH_SIZE), 1):
     )
     if resp.ok:
         ok = resp.text.count("HTTP/1.1 204")
-        fail = len(batch) - ok
+        errors += len(batch) - ok
         updated += ok
-        errors += fail
-        print(f"  Batch {batch_num}/{total_batches}: {ok} migrated, {fail} errors")
+        print(f"  Batch {batch_num}/{total_batches}: {ok} migrated, {len(batch)-ok} errors")
     else:
         errors += len(batch)
         print(f"  Batch {batch_num}/{total_batches} FAILED: {resp.status_code} {resp.text[:150]}")
