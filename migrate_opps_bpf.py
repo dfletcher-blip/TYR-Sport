@@ -163,6 +163,22 @@ if not opp_ids:
 
 # ── Step 5: Batch migrate ────────────────────────────────────────────────────
 print(f"Step 5: Migrating {len(opp_ids)} opportunities to '{chosen['bpf']['name']}'...")
+print(f"  First 3 opportunity IDs: {opp_ids[:3]}")
+
+# Test single PATCH first to catch errors before running full batch
+print("  Testing single PATCH on first opportunity...")
+r_test = requests.patch(
+    f"{DYNAMICS_URL}/api/data/v9.2/opportunities({opp_ids[0]})",
+    headers={**get_headers(), "If-Match": "*"},
+    json={"processid": target_id, "stageid": first_stage},
+    timeout=30,
+)
+print(f"  Test PATCH status: {r_test.status_code}")
+if not r_test.ok:
+    print(f"  Test PATCH error: {r_test.text[:600]}")
+    print("\n  Fix the error above before running the full batch.")
+    exit(1)
+print("  Test PATCH succeeded — running full batch...\n")
 BATCH_SIZE = 50
 updated = errors = 0
 total_batches = (len(opp_ids) + BATCH_SIZE - 1) // BATCH_SIZE
