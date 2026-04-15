@@ -1,10 +1,11 @@
 """
-Migrate opportunities from old Lead-to-Opportunity BPF to the correct
-opportunity BPF (the one applied when creating opportunities manually).
+Migrate opportunities from old Lead-to-Opportunity BPF to a standalone
+Opportunity BPF.
 
-The new Copy BPF is lead-only — it has no opportunity stages.
-This script finds all active BPFs that cover opportunities, identifies
-the target, and migrates opportunities off the old cross-entity BPF.
+For cross-entity BPFs the process state is stored in a BPF instance entity
+(e.g. leadtoopportunitysalesprocesses), NOT directly on the opportunity.
+This script finds those instances, extracts the opportunity IDs, then patches
+processid + stageid on each opportunity to switch it to the target BPF.
 """
 import os, uuid, time, requests
 from dotenv import load_dotenv
@@ -19,115 +20,123 @@ def get_headers(extra=None):
     if not _token["value"] or time.time() >= _token["expires"]:
         _token["value"] = get_access_token()
         _token["expires"] = time.time() + 3000
-    h = {
-        "Authorization": f"Bearer {_token['value']}",
-        "OData-MaxVersion": "4.0",
-        "OData-Version": "4.0",
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
+    h = {"Authorization": f"Bearer {_token['value']}",
+         "OData-MaxVersion": "4.0", "OData-Version": "4.0",
+         "Accept": "application/json", "Content-Type": "application/json"}
     if extra:
         h.update(extra)
     return h
 
 def get_stages(bpf_id):
-    r = requests.get(
-        f"{DYNAMICS_URL}/api/data/v9.2/processstages",
+    r = requests.get(f"{DYNAMICS_URL}/api/data/v9.2/processstages",
         headers=get_headers(),
-        params={
-            "$select": "processstageid,stagename,primaryentitytypecode",
-            "$filter": f"_processid_value eq {bpf_id}",
-        },
-        timeout=30,
-    )
+        params={"$select": "processstageid,stagename,primaryentitytypecode",
+                "$filter": f"_processid_value eq {bpf_id}"},
+        timeout=30)
     return r.json().get("value", [])
 
-# ── Step 1: Find the old Lead-to-Opportunity BPF ────────────────────────────
+# ── Step 1: Find the old BPF and its instance entity name ───────────────────
 print("Step 1: Finding old Lead-to-Opportunity BPF...")
-resp = requests.get(
-    f"{DYNAMICS_URL}/api/data/v9.2/workflows",
+resp = requests.get(f"{DYNAMICS_URL}/api/data/v9.2/workflows",
     headers=get_headers(),
-    params={
-        "$select": "workflowid,name,createdon",
-        "$filter": "category eq 4 and contains(name,'Lead to Opportunity') and statecode eq 1",
-        "$orderby": "createdon asc",
-    },
-    timeout=30,
-)
-lead_bpfs = resp.json().get("value", [])
-old_bpf = next((b for b in lead_bpfs if "(Copy)" not in b["name"]), None)
+    params={"$select": "workflowid,name,uniquename,primaryentity",
+            "$filter": "category eq 4 and contains(name,'Lead to Opportunity') and statecode eq 1",
+            "$orderby": "createdon asc"},
+    timeout=30)
+bpfs = resp.json().get("value", [])
+old_bpf = next((b for b in bpfs if "(Copy)" not in b["name"]), None)
 if not old_bpf:
-    print("  Could not find old Lead to Opportunity BPF. Exiting.")
+    print("Could not find old BPF. Exiting.")
     exit(1)
-old_bpf_id = old_bpf["workflowid"]
-print(f"  Old BPF: {old_bpf['name']} ({old_bpf_id})")
 
-old_stages = get_stages(old_bpf_id)
-old_opp_stages = [s for s in old_stages if s["primaryentitytypecode"] == "opportunity"]
-print(f"  Old opportunity stages: {[s['stagename'] for s in old_opp_stages]}\n")
+old_bpf_id   = old_bpf["workflowid"]
+unique_name  = (old_bpf.get("uniquename") or "").lower().strip()
+entity_set   = unique_name + "es" if unique_name else "leadtoopportunitysalesprocesses"
+print(f"  Name:        {old_bpf['name']}")
+print(f"  ID:          {old_bpf_id}")
+print(f"  Uniquename:  {unique_name}")
+print(f"  Entity set:  {entity_set}\n")
 
-# ── Step 2: Find ALL active BPFs that have opportunity stages ───────────────
-print("Step 2: Finding all active BPFs with opportunity stages...")
-resp2 = requests.get(
-    f"{DYNAMICS_URL}/api/data/v9.2/workflows",
+# ── Step 2: Probe BPF instance entity to find field names ───────────────────
+print("Step 2: Probing BPF instance entity...")
+r_probe = requests.get(f"{DYNAMICS_URL}/api/data/v9.2/{entity_set}",
+    headers=get_headers(), params={"$top": 2}, timeout=30)
+print(f"  Status: {r_probe.status_code}")
+
+opp_field = None
+if r_probe.ok:
+    instances = r_probe.json().get("value", [])
+    if instances:
+        all_keys = sorted(instances[0].keys())
+        print(f"  Fields: {all_keys}")
+        # Find field that links to opportunity
+        for k in all_keys:
+            if "opportunity" in k.lower() and not k.startswith("@"):
+                opp_field = k
+                print(f"  -> Opportunity link field: {opp_field}")
+                break
+    else:
+        print("  No instances found in entity.")
+else:
+    # Try alternate entity set name (without trailing 'es')
+    r_probe2 = requests.get(f"{DYNAMICS_URL}/api/data/v9.2/{unique_name}",
+        headers=get_headers(), params={"$top": 2}, timeout=30)
+    print(f"  Alternate ({unique_name}) status: {r_probe2.status_code}")
+    if r_probe2.ok:
+        entity_set = unique_name
+        instances = r_probe2.json().get("value", [])
+        if instances:
+            all_keys = sorted(instances[0].keys())
+            print(f"  Fields: {all_keys}")
+            for k in all_keys:
+                if "opportunity" in k.lower() and not k.startswith("@"):
+                    opp_field = k
+                    print(f"  -> Opportunity link field: {opp_field}")
+                    break
+print()
+
+if not opp_field:
+    print("Could not find opportunity link field on BPF instance entity.")
+    print("Check entity set name or field names above and update script.")
+    exit(1)
+
+# ── Step 3: Find target opportunity BPF ─────────────────────────────────────
+print("Step 3: Finding active BPFs with opportunity stages...")
+resp2 = requests.get(f"{DYNAMICS_URL}/api/data/v9.2/workflows",
     headers=get_headers(),
-    params={
-        "$select": "workflowid,name,createdon",
-        "$filter": "category eq 4 and statecode eq 1",
-    },
-    timeout=30,
-)
+    params={"$select": "workflowid,name", "$filter": "category eq 4 and statecode eq 1"},
+    timeout=30)
 all_bpfs = resp2.json().get("value", [])
-print(f"  Total active BPFs: {len(all_bpfs)}")
 
 opp_bpfs = []
 for bpf in all_bpfs:
     if bpf["workflowid"] == old_bpf_id:
-        continue  # skip the old one
+        continue
     stages = get_stages(bpf["workflowid"])
     opp_stages = [s for s in stages if s["primaryentitytypecode"] == "opportunity"]
     if opp_stages:
         opp_bpfs.append({"bpf": bpf, "stages": opp_stages})
-        print(f"  Found: {bpf['name']}")
+        print(f"  {len(opp_bpfs)}. {bpf['name']}")
         for s in opp_stages:
-            print(f"    {s['stagename']} ({s['processstageid']})")
-    time.sleep(0.2)
+            print(f"       {s['stagename']:25s} {s['processstageid']}")
+    time.sleep(0.1)
 
-print()
 if not opp_bpfs:
-    print("  No other active BPFs have opportunity stages.")
-    print("  The old BPF is the only one covering opportunities.")
-    print("  Options:")
-    print("    1. Create an Opportunity Sales Process BPF in Dynamics 365")
-    print("    2. Or remove the BPF from these opportunities entirely (patch processid to null)")
-    print()
-    ans = input("  Patch processid to null to detach old BPF? (yes/no): ").strip().lower()
-    if ans != "yes":
-        print("  Exiting — no changes made.")
-        exit(0)
-    target_bpf_id = None
-    target_stages = []
-else:
-    if len(opp_bpfs) == 1:
-        chosen = opp_bpfs[0]
-        print(f"  Using: {chosen['bpf']['name']}")
-    else:
-        print("  Multiple BPFs found. Choose target:")
-        for i, ob in enumerate(opp_bpfs):
-            print(f"    {i+1}. {ob['bpf']['name']}")
-        idx = int(input("  Enter number: ").strip()) - 1
-        chosen = opp_bpfs[idx]
-    target_bpf_id = chosen["bpf"]["workflowid"]
-    target_stages = chosen["stages"]
-    first_stage_id = target_stages[0]["processstageid"]
-    print(f"  Target BPF: {chosen['bpf']['name']} ({target_bpf_id})")
-    print(f"  First stage: {target_stages[0]['stagename']} ({first_stage_id})\n")
+    print("No other BPF has opportunity stages — cannot migrate.")
+    exit(1)
 
-# ── Step 3: Find all open opportunities on old BPF ──────────────────────────
-print("Step 3: Fetching all open opportunities (filtering by processid in Python)...")
-all_open = []
-url = f"{DYNAMICS_URL}/api/data/v9.2/opportunities"
-params = {"$select": "opportunityid,name,stageid,processid", "$filter": "statecode eq 0"}
+idx = int(input("\nEnter number of target BPF: ").strip()) - 1
+chosen       = opp_bpfs[idx]
+target_id    = chosen["bpf"]["workflowid"]
+first_stage  = chosen["stages"][0]["processstageid"]
+print(f"\nTarget: {chosen['bpf']['name']}")
+print(f"First stage: {chosen['stages'][0]['stagename']} ({first_stage})\n")
+
+# ── Step 4: Get opportunity IDs from BPF instance entity ────────────────────
+print("Step 4: Fetching opportunity IDs from BPF instances...")
+opp_ids = []
+url = f"{DYNAMICS_URL}/api/data/v9.2/{entity_set}"
+params = {"$select": opp_field}
 page = 0
 while url:
     r = requests.get(url, headers=get_headers({"Prefer": "odata.maxpagesize=5000"}),
@@ -135,64 +144,46 @@ while url:
     if not r.ok:
         print(f"  Error: {r.status_code} {r.text[:300]}")
         exit(1)
-    data = r.json()
-    all_open.extend(data.get("value", []))
+    for inst in r.json().get("value", []):
+        oid = inst.get(opp_field) or inst.get(f"_{opp_field}_value")
+        if oid:
+            opp_ids.append(str(oid))
     page += 1
-    url = data.get("@odata.nextLink")
+    url = r.json().get("@odata.nextLink")
     params = None
-    time.sleep(0.3)
+    time.sleep(0.2)
 
-# Show processid distribution to confirm we're matching correctly
-from collections import Counter
-pid_counts = Counter(o.get("processid") for o in all_open)
-print(f"  Fetched {len(all_open)} open opps across {page} page(s)")
-print(f"  Process ID distribution (top 5):")
-for pid, cnt in pid_counts.most_common(5):
-    label = "(old BPF)" if pid == old_bpf_id else ""
-    print(f"    {pid}: {cnt} opps {label}")
+# Deduplicate
+opp_ids = list(set(opp_ids))
+print(f"  Found {len(opp_ids)} unique opportunity IDs from BPF instances\n")
 
-all_opps = [o for o in all_open if o.get("processid") == old_bpf_id]
-print(f"\n  Opportunities on old BPF: {len(all_opps)}\n")
-if not all_opps:
-    print("  Nothing to migrate.")
+if not opp_ids:
+    print("No opportunities linked to BPF instances. Nothing to migrate.")
     exit(0)
 
-# ── Step 4: Batch migrate ────────────────────────────────────────────────────
-print("Step 4: Migrating...")
+# ── Step 5: Batch migrate ────────────────────────────────────────────────────
+print(f"Step 5: Migrating {len(opp_ids)} opportunities to '{chosen['bpf']['name']}'...")
 BATCH_SIZE = 50
 updated = errors = 0
-total_batches = (len(all_opps) + BATCH_SIZE - 1) // BATCH_SIZE
+total_batches = (len(opp_ids) + BATCH_SIZE - 1) // BATCH_SIZE
 
-for batch_num, start in enumerate(range(0, len(all_opps), BATCH_SIZE), 1):
-    batch = all_opps[start:start + BATCH_SIZE]
+for batch_num, start in enumerate(range(0, len(opp_ids), BATCH_SIZE), 1):
+    batch = opp_ids[start:start + BATCH_SIZE]
     boundary = f"batch_{uuid.uuid4().hex}"
     parts = []
-    for opp in batch:
-        oid = opp["opportunityid"]
-        if target_bpf_id:
-            payload = (
-                f'{{"processid@odata.bind":"/workflows({target_bpf_id})",'
-                f'"stageid@odata.bind":"/processstages({first_stage_id})"}}'
-            )
-        else:
-            # Detach BPF entirely
-            payload = '{"processid":null,"stageid":null}'
+    for oid in batch:
+        payload = (f'{{"processid@odata.bind":"/workflows({target_id})",'
+                   f'"stageid@odata.bind":"/processstages({first_stage})"}}'  )
         parts.append(
-            f"--{boundary}\r\n"
-            f"Content-Type: application/http\r\n"
+            f"--{boundary}\r\nContent-Type: application/http\r\n"
             f"Content-Transfer-Encoding: binary\r\n\r\n"
             f"PATCH {DYNAMICS_URL}/api/data/v9.2/opportunities({oid}) HTTP/1.1\r\n"
-            f"Content-Type: application/json\r\n"
-            f"If-Match: *\r\n\r\n"
-            f"{payload}\r\n"
+            f"Content-Type: application/json\r\nIf-Match: *\r\n\r\n{payload}\r\n"
         )
     body = "".join(parts) + f"--{boundary}--\r\n"
-    resp = requests.post(
-        f"{DYNAMICS_URL}/api/data/v9.2/$batch",
+    resp = requests.post(f"{DYNAMICS_URL}/api/data/v9.2/$batch",
         headers={**get_headers(), "Content-Type": f"multipart/mixed; boundary={boundary}"},
-        data=body.encode("utf-8"),
-        timeout=120,
-    )
+        data=body.encode("utf-8"), timeout=120)
     if resp.ok:
         ok = resp.text.count("HTTP/1.1 204")
         errors += len(batch) - ok
