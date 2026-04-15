@@ -172,8 +172,8 @@ for batch_num, start in enumerate(range(0, len(opp_ids), BATCH_SIZE), 1):
     boundary = f"batch_{uuid.uuid4().hex}"
     parts = []
     for oid in batch:
-        payload = (f'{{"processid@odata.bind":"/workflows({target_id})",'
-                   f'"stageid@odata.bind":"/processstages({first_stage})"}}'  )
+        # processid and stageid are plain GUID fields, not navigation properties
+        payload = f'{{"processid":"{target_id}","stageid":"{first_stage}"}}'
         parts.append(
             f"--{boundary}\r\nContent-Type: application/http\r\n"
             f"Content-Transfer-Encoding: binary\r\n\r\n"
@@ -186,12 +186,22 @@ for batch_num, start in enumerate(range(0, len(opp_ids), BATCH_SIZE), 1):
         data=body.encode("utf-8"), timeout=120)
     if resp.ok:
         ok = resp.text.count("HTTP/1.1 204")
-        errors += len(batch) - ok
+        fail = len(batch) - ok
+        errors += fail
         updated += ok
-        print(f"  Batch {batch_num}/{total_batches}: {ok} migrated, {len(batch)-ok} errors")
+        print(f"  Batch {batch_num}/{total_batches}: {ok} migrated, {fail} errors")
+        if fail:
+            # Show first individual error from batch response
+            for line in resp.text.splitlines():
+                if "HTTP/1.1 4" in line or '"message"' in line:
+                    print(f"    {line.strip()}")
+                    break
     else:
         errors += len(batch)
-        print(f"  Batch {batch_num}/{total_batches} FAILED: {resp.status_code} {resp.text[:150]}")
+        # Parse first individual error out of multipart body
+        first_err = next((l.strip() for l in resp.text.splitlines()
+                          if '"message"' in l or "HTTP/1.1 4" in l), resp.text[:200])
+        print(f"  Batch {batch_num}/{total_batches} FAILED: {resp.status_code} — {first_err}")
     time.sleep(1)
 
 print(f"\nDone. Migrated: {updated}, Errors: {errors}")
