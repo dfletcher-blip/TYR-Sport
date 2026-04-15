@@ -221,3 +221,76 @@ for batch_num, start in enumerate(range(0, len(opp_ids), BATCH_SIZE), 1):
     time.sleep(1)
 
 print(f"\nDone. Migrated: {updated}, Errors: {errors}")
+
+# ── Step 6: Second pass — all remaining open opportunities ──────────────────
+print("\nStep 6: Checking all open opportunities not already on target BPF...")
+all_open = []
+url = f"{DYNAMICS_URL}/api/data/v9.2/opportunities"
+params = {"$select": "opportunityid,name,processid", "$filter": "statecode eq 0"}
+page = 0
+while url:
+    r = requests.get(url, headers=get_headers({"Prefer": "odata.maxpagesize=5000"}),
+                     params=params, timeout=60)
+    if not r.ok:
+        print(f"  Error fetching opportunities: {r.status_code} {r.text[:200]}")
+        exit(1)
+    all_open.extend(r.json().get("value", []))
+    page += 1
+    url = r.json().get("@odata.nextLink")
+    params = None
+    time.sleep(0.2)
+
+print(f"  Total open opportunities: {len(all_open)}")
+
+# Skip any already on target BPF or already migrated in Step 5
+already_done = set(opp_ids)
+remaining = [o for o in all_open
+             if o["opportunityid"] not in already_done
+             and o.get("processid") != target_id]
+print(f"  Already on target BPF or just migrated: {len(all_open) - len(remaining)}")
+print(f"  Need updating: {len(remaining)}\n")
+
+if not remaining:
+    print("All opportunities already on target BPF.")
+    exit(0)
+
+print(f"Migrating remaining {len(remaining)} opportunities...")
+updated2 = errors2 = 0
+total_batches2 = (len(remaining) + BATCH_SIZE - 1) // BATCH_SIZE
+
+for batch_num, start in enumerate(range(0, len(remaining), BATCH_SIZE), 1):
+    batch = [o["opportunityid"] for o in remaining[start:start + BATCH_SIZE]]
+    boundary = f"batch_{uuid.uuid4().hex}"
+    parts = []
+    for oid in batch:
+        payload = f'{{"processid":"{target_id}","stageid":"{first_stage}"}}'
+        parts.append(
+            f"--{boundary}\r\nContent-Type: application/http\r\n"
+            f"Content-Transfer-Encoding: binary\r\n\r\n"
+            f"PATCH {DYNAMICS_URL}/api/data/v9.2/opportunities({oid}) HTTP/1.1\r\n"
+            f"Content-Type: application/json\r\nIf-Match: *\r\n\r\n{payload}\r\n"
+        )
+    body = "".join(parts) + f"--{boundary}--\r\n"
+    resp = requests.post(f"{DYNAMICS_URL}/api/data/v9.2/$batch",
+        headers={**get_headers(), "Content-Type": f"multipart/mixed; boundary={boundary}"},
+        data=body.encode("utf-8"), timeout=120)
+    if resp.ok:
+        ok = resp.text.count("HTTP/1.1 204")
+        fail = len(batch) - ok
+        errors2 += fail
+        updated2 += ok
+        print(f"  Batch {batch_num}/{total_batches2}: {ok} migrated, {fail} errors")
+        if fail:
+            first_err = next((l.strip() for l in resp.text.splitlines()
+                              if '"message"' in l), "")
+            if first_err:
+                print(f"    {first_err}")
+    else:
+        errors2 += len(batch)
+        first_err = next((l.strip() for l in resp.text.splitlines()
+                          if '"message"' in l or "HTTP/1.1 4" in l), resp.text[:200])
+        print(f"  Batch {batch_num}/{total_batches2} FAILED: {resp.status_code} — {first_err}")
+    time.sleep(1)
+
+print(f"\nStep 6 done. Migrated: {updated2}, Errors: {errors2}")
+print(f"\nTotal migrated: {updated + updated2}, Total errors: {errors + errors2}")
