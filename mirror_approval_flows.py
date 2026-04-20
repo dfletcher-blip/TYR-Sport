@@ -20,7 +20,7 @@ from config.crm_connection import get_access_token
 DYNAMICS_URL = os.getenv("DYNAMICS_URL", "").rstrip("/")
 DRY_RUN = os.getenv("DRY_RUN", "0").strip() == "1"
 
-SOURCE_NAME = "Angie Nicoletta"
+SOURCE_NAME = "Angie Nicolletta"
 TARGET_NAME = "Julie Meredith"
 
 _session = requests.Session()
