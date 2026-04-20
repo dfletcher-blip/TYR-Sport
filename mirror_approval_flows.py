@@ -1,16 +1,17 @@
 """
-Mirror approval flow configuration from one user to another.
+Mirror approval flow configuration from Angie Nicolletta to Julie Meredith.
 
-Reads Angie Nicoletta's team memberships, security roles, and queue memberships
-then applies any missing ones to Julie Meredith.
+Checks and syncs:
+  1. Team memberships
+  2. Security roles
+  3. Queue memberships
+  4. Approval workflows where Angie is a named approver
 
 Usage:
-    python mirror_approval_flows.py
-
-Set DRY_RUN=1 to preview changes without applying them:
-    DRY_RUN=1 python mirror_approval_flows.py
+    python mirror_approval_flows.py            # apply changes
+    python mirror_approval_flows.py --dry-run  # preview only
 """
-import os, time, requests
+import sys, os, json, time, requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from dotenv import load_dotenv
@@ -18,7 +19,7 @@ load_dotenv()
 from config.crm_connection import get_access_token
 
 DYNAMICS_URL = os.getenv("DYNAMICS_URL", "").rstrip("/")
-DRY_RUN = os.getenv("DRY_RUN", "0").strip() == "1"
+DRY_RUN = "--dry-run" in sys.argv
 
 SOURCE_NAME = "Angie Nicolletta"
 TARGET_NAME = "Julie Meredith"
@@ -58,15 +59,14 @@ def post(path, body):
         raise RuntimeError(f"POST {path} failed {r.status_code}: {r.text[:400]}")
     return r
 
-def delete(path):
-    r = _session.delete(f"{DYNAMICS_URL}/api/data/v9.2/{path}",
-                        headers=get_headers(), timeout=30)
+def patch(path, body):
+    r = _session.patch(f"{DYNAMICS_URL}/api/data/v9.2/{path}",
+                       headers=get_headers({"If-Match": "*"}), json=body, timeout=30)
     if not r.ok:
-        raise RuntimeError(f"DELETE {path} failed {r.status_code}: {r.text[:400]}")
+        raise RuntimeError(f"PATCH {path} failed {r.status_code}: {r.text[:400]}")
     return r
 
 def find_user(full_name):
-    """Look up a systemuser by full name."""
     first, *rest = full_name.strip().split()
     last = " ".join(rest)
     data = get("systemusers", {
@@ -75,7 +75,6 @@ def find_user(full_name):
     })
     users = [u for u in data.get("value", []) if not u.get("isdisabled")]
     if not users:
-        # Fallback: contains search on fullname
         data2 = get("systemusers", {
             "$select": "systemuserid,fullname,internalemailaddress,isdisabled",
             "$filter": f"contains(fullname,'{full_name}')",
@@ -84,39 +83,79 @@ def find_user(full_name):
     return users
 
 def get_user_teams(user_id):
-    """Return list of teams the user belongs to."""
     data = get(f"systemusers({user_id})/teammembership_association",
                {"$select": "teamid,name,teamtype,isdefault"})
     return data.get("value", [])
 
 def get_user_roles(user_id):
-    """Return list of security roles assigned directly to the user."""
     data = get(f"systemusers({user_id})/systemuserroles_association",
-               {"$select": "roleid,name,businessunitid"})
+               {"$select": "roleid,name"})
     return data.get("value", [])
 
 def get_user_queues(user_id):
-    """Return queues the user is a member of."""
-    # Try navigation property first, then fall back to direct entity query
-    attempts = [
+    for attempt in [
         lambda: get(f"systemusers({user_id})/queuemembership_systemuser",
                     {"$select": "queueid,name,queuetypecode"}),
         lambda: get("queues", {
             "$select": "queueid,name,queuetypecode",
             "$filter": f"queue_membership/any(m: m/_systemuserid_value eq {user_id})",
         }),
-    ]
-    for attempt in attempts:
+    ]:
         try:
-            data = attempt()
-            return data.get("value", [])
+            return attempt().get("value", [])
         except RuntimeError:
             pass
     print("  (queue membership lookup not supported on this org — skipping)")
     return []
 
+def queue_id(q):
+    raw = q.get("queueid")
+    return raw.get("queueid") if isinstance(raw, dict) else raw
+
+def queue_name(q):
+    raw = q.get("queueid")
+    return raw.get("name", "?") if isinstance(raw, dict) else q.get("name", "?")
+
+def get_approval_workflows_for_user(user_id):
+    """
+    Find active approval workflows (classic + Power Automate) where this
+    user is the owner/assigned approver, or where the workflow is owned
+    by this user.
+    """
+    results = []
+    # Workflows owned by the user
+    try:
+        data = get("workflows", {
+            "$select": "workflowid,name,category,statecode,statuscode",
+            "$filter": f"_ownerid_value eq {user_id} and statecode eq 1",
+        })
+        for w in data.get("value", []):
+            w["_match_reason"] = "owner"
+            results.append(w)
+    except RuntimeError as e:
+        print(f"  (workflow owner query failed: {e})")
+
+    # Workflows with a process trigger on this user
+    try:
+        data2 = get("workflows", {
+            "$select": "workflowid,name,category,statecode",
+            "$filter": (
+                f"statecode eq 1 and "
+                f"(contains(name,'approval') or contains(name,'Approval') or "
+                f"contains(name,'approve') or contains(name,'Approve'))"
+            ),
+        })
+        for w in data2.get("value", []):
+            if not any(x["workflowid"] == w["workflowid"] for x in results):
+                w["_match_reason"] = "name-match"
+                results.append(w)
+    except RuntimeError as e:
+        print(f"  (approval workflow name query failed: {e})")
+
+    return results
+
 # ── Find both users ───────────────────────────────────────────────────────────
-print(f"Looking up users...")
+print("Looking up users...")
 src_matches = find_user(SOURCE_NAME)
 tgt_matches = find_user(TARGET_NAME)
 
@@ -139,7 +178,7 @@ print()
 if DRY_RUN:
     print("*** DRY RUN — no changes will be made ***\n")
 
-# ── Fetch current state ───────────────────────────────────────────────────────
+# ── Teams ─────────────────────────────────────────────────────────────────────
 print("Fetching team memberships...")
 src_teams = get_user_teams(src_id)
 tgt_teams = get_user_teams(tgt_id)
@@ -147,13 +186,13 @@ tgt_team_ids = {t["teamid"] for t in tgt_teams}
 
 print(f"  {SOURCE_NAME}: {len(src_teams)} team(s)")
 for t in src_teams:
-    marker = "(default)" if t.get("isdefault") else ""
-    print(f"    [{t.get('teamtype','')}] {t['name']} {marker}")
+    print(f"    [{t.get('teamtype','')}] {t['name']}" + (" (default)" if t.get("isdefault") else ""))
 print(f"  {TARGET_NAME}: {len(tgt_teams)} team(s)")
 for t in tgt_teams:
     print(f"    [{t.get('teamtype','')}] {t['name']}")
 print()
 
+# ── Roles ─────────────────────────────────────────────────────────────────────
 print("Fetching security roles...")
 src_roles = get_user_roles(src_id)
 tgt_roles = get_user_roles(tgt_id)
@@ -167,21 +206,7 @@ for r in tgt_roles:
     print(f"    {r['name']}")
 print()
 
-def queue_id(q):
-    """Extract queue GUID regardless of response shape."""
-    # Navigation property shape: {"queueid": "guid", "name": "..."}
-    # Expanded shape: {"queueid": {"queueid": "guid", ...}}
-    raw = q.get("queueid")
-    if isinstance(raw, dict):
-        return raw.get("queueid")
-    return raw  # plain GUID string
-
-def queue_name(q):
-    raw = q.get("queueid")
-    if isinstance(raw, dict):
-        return raw.get("name", "?")
-    return q.get("name", "?")
-
+# ── Queues ────────────────────────────────────────────────────────────────────
 print("Fetching queue memberships...")
 src_queues = get_user_queues(src_id)
 tgt_queues = get_user_queues(tgt_id)
@@ -195,50 +220,77 @@ for q in tgt_queues:
     print(f"    {queue_name(q)}")
 print()
 
-# ── Compute diffs ─────────────────────────────────────────────────────────────
-teams_to_add   = [t for t in src_teams if not t.get("isdefault") and t["teamid"] not in tgt_team_ids]
-roles_to_add   = [r for r in src_roles if r["roleid"] not in tgt_role_ids]
-queues_to_add  = [q for q in src_queues if queue_id(q) not in tgt_queue_ids]
+# ── Approval workflows ────────────────────────────────────────────────────────
+print("Fetching approval workflows owned by source user...")
+src_workflows = get_approval_workflows_for_user(src_id)
+tgt_wf_ids = set()
+try:
+    tgt_wf_data = get("workflows", {
+        "$select": "workflowid",
+        "$filter": f"_ownerid_value eq {tgt_id} and statecode eq 1",
+    })
+    tgt_wf_ids = {w["workflowid"] for w in tgt_wf_data.get("value", [])}
+except RuntimeError:
+    pass
+
+cat_labels = {0: "Workflow", 1: "Dialog", 2: "BusinessRule", 3: "Action",
+              4: "BPF", 5: "ModernFlow", 6: "CustomApi"}
+
+print(f"  {SOURCE_NAME} approval-related workflows: {len(src_workflows)}")
+for w in src_workflows:
+    cat = cat_labels.get(w.get("category"), str(w.get("category", "?")))
+    print(f"    [{cat}] {w['name']} (reason: {w.get('_match_reason','')})")
+print()
+
+# Workflows owned by Angie that Julie doesn't own
+workflows_to_reassign = [w for w in src_workflows
+                         if w.get("_match_reason") == "owner"
+                         and w["workflowid"] not in tgt_wf_ids]
+
+# ── Diffs ─────────────────────────────────────────────────────────────────────
+teams_to_add      = [t for t in src_teams if not t.get("isdefault") and t["teamid"] not in tgt_team_ids]
+roles_to_add      = [r for r in src_roles if r["roleid"] not in tgt_role_ids]
+queues_to_add     = [q for q in src_queues if queue_id(q) not in tgt_queue_ids]
 
 print("=" * 60)
 print("CHANGES TO APPLY")
 print("=" * 60)
-print(f"  Teams to add  : {len(teams_to_add)}")
+print(f"  Teams to add        : {len(teams_to_add)}")
 for t in teams_to_add:
     print(f"    + {t['name']}")
-print(f"  Roles to add  : {len(roles_to_add)}")
+print(f"  Roles to add        : {len(roles_to_add)}")
 for r in roles_to_add:
     print(f"    + {r['name']}")
-print(f"  Queues to add : {len(queues_to_add)}")
+print(f"  Queues to add       : {len(queues_to_add)}")
 for q in queues_to_add:
-    qi = q.get("queueid") or {}
-    print(f"    + {qi.get('name','?')}")
+    print(f"    + {queue_name(q)}")
+print(f"  Workflows to co-own : {len(workflows_to_reassign)}")
+for w in workflows_to_reassign:
+    print(f"    ~ {w['name']} (will add {TARGET_NAME} as owner)")
 print()
 
-if not teams_to_add and not roles_to_add and not queues_to_add:
-    print(f"{TARGET_NAME} already has the same approval configuration as {SOURCE_NAME}.")
+if not any([teams_to_add, roles_to_add, queues_to_add, workflows_to_reassign]):
+    print(f"{TARGET_NAME} already mirrors {SOURCE_NAME}'s approval configuration.")
     exit(0)
 
 if DRY_RUN:
-    print("Dry run complete — re-run without DRY_RUN=1 to apply changes.")
+    print("Dry run complete. Run without --dry-run to apply changes.")
     exit(0)
 
-# ── Apply changes ─────────────────────────────────────────────────────────────
-added_teams = added_roles = added_queues = 0
+# ── Apply ─────────────────────────────────────────────────────────────────────
+added_teams = added_roles = added_queues = added_wf = 0
 errors = 0
 
 if teams_to_add:
     print("Adding team memberships...")
     for t in teams_to_add:
         try:
-            post(
-                f"teams({t['teamid']})/teammembership_association/$ref",
-                {"@odata.id": f"{DYNAMICS_URL}/api/data/v9.2/systemusers({tgt_id})"},
-            )
-            print(f"  + Added to team: {t['name']}")
+            post(f"teams({t['teamid']})/teammembership_association/$ref",
+                 {"@odata.id": f"{DYNAMICS_URL}/api/data/v9.2/systemusers({tgt_id})"})
+            print(f"  + {t['name']}")
             added_teams += 1
         except RuntimeError as e:
-            print(f"  ! Failed to add team '{t['name']}': {e}")
+            print(f"  ! {t['name']}: {e}")
             errors += 1
         time.sleep(0.3)
 
@@ -246,22 +298,19 @@ if roles_to_add:
     print("Adding security roles...")
     for r in roles_to_add:
         try:
-            post(
-                f"systemusers({tgt_id})/systemuserroles_association/$ref",
-                {"@odata.id": f"{DYNAMICS_URL}/api/data/v9.2/roles({r['roleid']})"},
-            )
-            print(f"  + Added role: {r['name']}")
+            post(f"systemusers({tgt_id})/systemuserroles_association/$ref",
+                 {"@odata.id": f"{DYNAMICS_URL}/api/data/v9.2/roles({r['roleid']})"})
+            print(f"  + {r['name']}")
             added_roles += 1
         except RuntimeError as e:
-            print(f"  ! Failed to add role '{r['name']}': {e}")
+            print(f"  ! {r['name']}: {e}")
             errors += 1
         time.sleep(0.3)
 
 if queues_to_add:
     print("Adding queue memberships...")
     for q in queues_to_add:
-        qid = queue_id(q)
-        qname = queue_name(q)
+        qid, qname = queue_id(q), queue_name(q)
         if not qid:
             continue
         try:
@@ -269,17 +318,31 @@ if queues_to_add:
                 "queueid@odata.bind": f"/queues({qid})",
                 "systemuserid@odata.bind": f"/systemusers({tgt_id})",
             })
-            print(f"  + Added to queue: {qname}")
+            print(f"  + {qname}")
             added_queues += 1
         except RuntimeError as e:
-            print(f"  ! Failed to add queue '{qname}': {e}")
+            print(f"  ! {qname}: {e}")
+            errors += 1
+        time.sleep(0.3)
+
+if workflows_to_reassign:
+    print("Updating workflow ownership...")
+    for w in workflows_to_reassign:
+        try:
+            patch(f"workflows({w['workflowid']})",
+                  {"ownerid@odata.bind": f"/systemusers({tgt_id})"})
+            print(f"  + {w['name']}")
+            added_wf += 1
+        except RuntimeError as e:
+            print(f"  ! {w['name']}: {e}")
             errors += 1
         time.sleep(0.3)
 
 print()
-print(f"Done.")
-print(f"  Teams added  : {added_teams}")
-print(f"  Roles added  : {added_roles}")
-print(f"  Queues added : {added_queues}")
+print("Done.")
+print(f"  Teams added        : {added_teams}")
+print(f"  Roles added        : {added_roles}")
+print(f"  Queues added       : {added_queues}")
+print(f"  Workflows updated  : {added_wf}")
 if errors:
-    print(f"  Errors       : {errors}")
+    print(f"  Errors             : {errors}")
