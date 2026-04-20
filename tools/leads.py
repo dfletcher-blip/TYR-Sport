@@ -2,10 +2,10 @@
 # tools/leads.py — Lead Management
 # ============================================================
 
-import sys, os
+import sys, os, csv, json, uuid, time, requests
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from config.crm_connection import crm_get, crm_patch, crm_post, crm_action
+from config.crm_connection import crm_get, crm_patch, crm_post, crm_action, get_access_token
 
 
 def search_leads(search_term: str = "", status: str = "open", limit: int = 50) -> dict:
@@ -185,6 +185,234 @@ def get_lead_summary() -> dict:
         "qualified": qualified,
         "disqualified": disqualified,
         "top_sources": [{"source": s, "count": c} for s, c in top_sources],
+    }
+
+
+def bulk_import_leads(file_path: str, preview_only: bool = True) -> dict:
+    """
+    Import leads from a CSV file into the CRM.
+
+    file_path:    absolute or relative path to the CSV file
+    preview_only: if True (default), show what would be imported without
+                  creating anything. Set to False to actually create the leads.
+
+    Supported CSV columns (case-insensitive, spaces/underscores flexible):
+      First Name / Last Name / Full Name
+      Email / Email Address
+      Phone / Phone Number
+      Company / Company Name / Account
+      Job Title / Title
+      Subject / Topic  (defaults to "Lead - <company>" if omitted)
+      Website
+      City / State / Zip / Postal Code / Country
+      Description / Notes
+      Lead Source  (Advertisement, Web, Trade Show, Referral, etc.)
+    """
+    DYNAMICS_URL = os.getenv("DYNAMICS_URL", "").rstrip("/")
+
+    # Column name normaliser → Dynamics 365 field
+    COLUMN_MAP = {
+        "firstname":       "firstname",
+        "first name":      "firstname",
+        "first_name":      "firstname",
+        "lastname":        "lastname",
+        "last name":       "lastname",
+        "last_name":       "lastname",
+        "fullname":        "fullname",
+        "full name":       "fullname",
+        "full_name":       "fullname",
+        "name":            "fullname",
+        "email":           "emailaddress1",
+        "email address":   "emailaddress1",
+        "emailaddress":    "emailaddress1",
+        "emailaddress1":   "emailaddress1",
+        "phone":           "telephone1",
+        "phone number":    "telephone1",
+        "telephone":       "telephone1",
+        "mobile":          "mobilephone",
+        "cell":            "mobilephone",
+        "company":         "companyname",
+        "company name":    "companyname",
+        "companyname":     "companyname",
+        "account":         "companyname",
+        "organization":    "companyname",
+        "jobtitle":        "jobtitle",
+        "job title":       "jobtitle",
+        "title":           "jobtitle",
+        "subject":         "subject",
+        "topic":           "subject",
+        "lead topic":      "subject",
+        "website":         "websiteurl",
+        "websiteurl":      "websiteurl",
+        "url":             "websiteurl",
+        "city":            "address1_city",
+        "state":           "address1_stateorprovince",
+        "province":        "address1_stateorprovince",
+        "zip":             "address1_postalcode",
+        "postal code":     "address1_postalcode",
+        "postalcode":      "address1_postalcode",
+        "zip code":        "address1_postalcode",
+        "country":         "address1_country",
+        "description":     "description",
+        "notes":           "description",
+        "note":            "description",
+        "leadsource":      "leadsourcecode",
+        "lead source":     "leadsourcecode",
+        "source":          "leadsourcecode",
+    }
+
+    LEAD_SOURCE_MAP = {
+        "advertisement": 1, "ad": 1,
+        "employee referral": 2,
+        "external referral": 3, "referral": 3,
+        "partner": 4,
+        "public relations": 5, "pr": 5,
+        "seminar": 6,
+        "trade show": 7, "tradeshow": 7,
+        "web": 8, "website": 8, "online": 8,
+        "word of mouth": 9,
+        "other": 10,
+    }
+
+    if not os.path.isfile(file_path):
+        return {"success": False, "error": f"File not found: {file_path}"}
+
+    # Read CSV
+    rows = []
+    try:
+        with open(file_path, newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            raw_headers = reader.fieldnames or []
+            for row in reader:
+                rows.append(dict(row))
+    except Exception as e:
+        return {"success": False, "error": f"Could not read CSV: {e}"}
+
+    if not rows:
+        return {"success": False, "error": "CSV file is empty."}
+
+    # Map CSV headers to CRM fields
+    header_to_field = {}
+    unmapped = []
+    for h in raw_headers:
+        key = h.strip().lower().replace("_", " ")
+        crm_field = COLUMN_MAP.get(key) or COLUMN_MAP.get(h.strip().lower())
+        if crm_field:
+            header_to_field[h] = crm_field
+        else:
+            unmapped.append(h)
+
+    # Build lead payloads
+    leads_to_create = []
+    skipped = []
+    for i, row in enumerate(rows, 1):
+        payload = {}
+        for csv_col, crm_field in header_to_field.items():
+            val = (row.get(csv_col) or "").strip()
+            if not val:
+                continue
+            if crm_field == "leadsourcecode":
+                val = LEAD_SOURCE_MAP.get(val.lower(), 10)
+            payload[crm_field] = val
+
+        # Build fullname from parts if not provided
+        if "fullname" not in payload:
+            first = payload.get("firstname", "")
+            last  = payload.get("lastname", "")
+            if first or last:
+                payload["fullname"] = f"{first} {last}".strip()
+
+        # subject is required in Dynamics 365
+        if "subject" not in payload:
+            company = payload.get("companyname", "")
+            name    = payload.get("fullname", f"Row {i}")
+            payload["subject"] = f"Lead - {company}" if company else f"Lead - {name}"
+
+        if not payload.get("fullname") and not payload.get("firstname"):
+            skipped.append({"row": i, "reason": "No name found"})
+            continue
+
+        leads_to_create.append(payload)
+
+    if preview_only:
+        sample = leads_to_create[:5]
+        return {
+            "mode": "PREVIEW — no records created",
+            "file": file_path,
+            "total_rows": len(rows),
+            "leads_to_create": len(leads_to_create),
+            "skipped_rows": len(skipped),
+            "column_mapping": header_to_field,
+            "unmapped_columns": unmapped,
+            "sample_records": sample,
+            "next_step": "Call bulk_import_leads again with preview_only=False to create the leads.",
+        }
+
+    # Batch create via OData $batch
+    BATCH_SIZE = 20
+    token_cache = {"value": None, "expires": 0}
+
+    def get_hdrs():
+        if not token_cache["value"] or time.time() >= token_cache["expires"]:
+            token_cache["value"] = get_access_token()
+            token_cache["expires"] = time.time() + 3000
+        return {
+            "Authorization": f"Bearer {token_cache['value']}",
+            "OData-MaxVersion": "4.0", "OData-Version": "4.0",
+            "Accept": "application/json", "Content-Type": "application/json",
+        }
+
+    session = requests.Session()
+    created = errors = 0
+    error_samples = []
+    total_batches = (len(leads_to_create) + BATCH_SIZE - 1) // BATCH_SIZE
+
+    for batch_num, start in enumerate(range(0, len(leads_to_create), BATCH_SIZE), 1):
+        batch = leads_to_create[start:start + BATCH_SIZE]
+        boundary = f"batch_{uuid.uuid4().hex}"
+        parts = []
+        for lead in batch:
+            body = json.dumps(lead)
+            parts.append(
+                f"--{boundary}\r\nContent-Type: application/http\r\n"
+                f"Content-Transfer-Encoding: binary\r\n\r\n"
+                f"POST {DYNAMICS_URL}/api/data/v9.2/leads HTTP/1.1\r\n"
+                f"Content-Type: application/json\r\n\r\n{body}\r\n"
+            )
+        batch_body = "".join(parts) + f"--{boundary}--\r\n"
+        hdrs = get_hdrs()
+        hdrs["Content-Type"] = f"multipart/mixed; boundary={boundary}"
+        resp = session.post(
+            f"{DYNAMICS_URL}/api/data/v9.2/$batch",
+            headers=hdrs,
+            data=batch_body.encode("utf-8"),
+            timeout=120,
+        )
+        if resp.ok:
+            ok   = resp.text.count("HTTP/1.1 204") + resp.text.count("HTTP/1.1 201")
+            fail = len(batch) - ok
+            created += ok
+            errors  += fail
+            if fail and len(error_samples) < 3:
+                for line in resp.text.splitlines():
+                    if '"message"' in line:
+                        error_samples.append(line.strip())
+                        break
+        else:
+            errors += len(batch)
+            if len(error_samples) < 3:
+                error_samples.append(f"Batch {batch_num} failed: {resp.status_code} {resp.text[:200]}")
+        time.sleep(0.5)
+
+    return {
+        "success": errors == 0,
+        "file": file_path,
+        "total_rows": len(rows),
+        "leads_created": created,
+        "errors": errors,
+        "skipped_rows": len(skipped),
+        "error_samples": error_samples,
+        "message": f"Import complete: {created} leads created, {errors} errors, {len(skipped)} rows skipped.",
     }
 
 

@@ -95,6 +95,7 @@ from tools.leads import (
     qualify_lead,
     get_lead_summary,
     find_stale_leads,
+    bulk_import_leads,
 )
 from tools.teams import (
     list_teams,
@@ -141,7 +142,7 @@ YOUR CAPABILITIES:
 4. DASHBOARDS — List, create, reorder, clone, and update dashboards (created as personal dashboards visible in My Dashboards)
 5. OPPORTUNITIES — Search deals, view pipeline, track stalled opportunities, update stages
 6. ACCOUNTS — Search companies, view account details with contacts and deals, update records
-7. LEADS — Search leads, qualify leads, find stale leads, update records
+7. LEADS — Search leads, qualify leads, find stale leads, update records, bulk import from CSV
 8. TEAMS — List teams, view team members, search by name
 9. BULK UPDATES — Update many contacts, leads, accounts, or opportunities at once by filter
 10. REPORTS — Data quality, pipeline, lead source, and activity reports
@@ -231,6 +232,7 @@ TOOL_REGISTRY = {
     "qualify_lead":                qualify_lead,
     "get_lead_summary":            get_lead_summary,
     "find_stale_leads":            find_stale_leads,
+    "bulk_import_leads":           bulk_import_leads,
 
     # Special Terms (STR) tools
     "search_special_terms":           search_special_terms,
@@ -719,6 +721,29 @@ TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {"days_inactive": {"type": "integer", "description": "Days without activity (default 14)"}},
+        },
+    },
+    {
+        "name": "bulk_import_leads",
+        "description": (
+            "Import leads in bulk from a CSV file. "
+            "Always call with preview_only=True first so the user can confirm the column mapping and record count before any data is created. "
+            "Then call again with preview_only=False to create the leads. "
+            "Supports flexible column names: First Name, Last Name, Full Name, Email, Phone, Company, Job Title, Subject, Website, City, State, Zip, Country, Description, Lead Source."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Full path to the CSV file, e.g. C:/Users/dfletcher/Downloads/leads.csv",
+                },
+                "preview_only": {
+                    "type": "boolean",
+                    "description": "If true, show a preview of what would be imported without creating any records (default true).",
+                },
+            },
+            "required": ["file_path"],
         },
     },
     # ── Special Terms (STR) ────────────────────────────────────
