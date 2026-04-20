@@ -97,12 +97,23 @@ def get_user_roles(user_id):
 
 def get_user_queues(user_id):
     """Return queues the user is a member of."""
-    data = get("queuemembers", {
-        "$select": "queuememberid,queueid",
-        "$expand": "queueid($select=name,queueid,queuetypecode)",
-        "$filter": f"systemuserid eq {user_id}",
-    })
-    return data.get("value", [])
+    # Try navigation property first, then fall back to direct entity query
+    attempts = [
+        lambda: get(f"systemusers({user_id})/queuemembership_systemuser",
+                    {"$select": "queueid,name,queuetypecode"}),
+        lambda: get("queues", {
+            "$select": "queueid,name,queuetypecode",
+            "$filter": f"queue_membership/any(m: m/_systemuserid_value eq {user_id})",
+        }),
+    ]
+    for attempt in attempts:
+        try:
+            data = attempt()
+            return data.get("value", [])
+        except RuntimeError:
+            pass
+    print("  (queue membership lookup not supported on this org — skipping)")
+    return []
 
 # ── Find both users ───────────────────────────────────────────────────────────
 print(f"Looking up users...")
@@ -156,26 +167,38 @@ for r in tgt_roles:
     print(f"    {r['name']}")
 print()
 
+def queue_id(q):
+    """Extract queue GUID regardless of response shape."""
+    # Navigation property shape: {"queueid": "guid", "name": "..."}
+    # Expanded shape: {"queueid": {"queueid": "guid", ...}}
+    raw = q.get("queueid")
+    if isinstance(raw, dict):
+        return raw.get("queueid")
+    return raw  # plain GUID string
+
+def queue_name(q):
+    raw = q.get("queueid")
+    if isinstance(raw, dict):
+        return raw.get("name", "?")
+    return q.get("name", "?")
+
 print("Fetching queue memberships...")
 src_queues = get_user_queues(src_id)
 tgt_queues = get_user_queues(tgt_id)
-tgt_queue_ids = {q["queueid"]["queueid"] for q in tgt_queues if q.get("queueid")}
+tgt_queue_ids = {queue_id(q) for q in tgt_queues if queue_id(q)}
 
 print(f"  {SOURCE_NAME}: {len(src_queues)} queue(s)")
 for q in src_queues:
-    qi = q.get("queueid") or {}
-    print(f"    {qi.get('name','?')} (type {qi.get('queuetypecode','?')})")
+    print(f"    {queue_name(q)}")
 print(f"  {TARGET_NAME}: {len(tgt_queues)} queue(s)")
 for q in tgt_queues:
-    qi = q.get("queueid") or {}
-    print(f"    {qi.get('name','?')}")
+    print(f"    {queue_name(q)}")
 print()
 
 # ── Compute diffs ─────────────────────────────────────────────────────────────
 teams_to_add   = [t for t in src_teams if not t.get("isdefault") and t["teamid"] not in tgt_team_ids]
 roles_to_add   = [r for r in src_roles if r["roleid"] not in tgt_role_ids]
-queues_to_add  = [q for q in src_queues
-                  if (q.get("queueid") or {}).get("queueid") not in tgt_queue_ids]
+queues_to_add  = [q for q in src_queues if queue_id(q) not in tgt_queue_ids]
 
 print("=" * 60)
 print("CHANGES TO APPLY")
@@ -237,20 +260,19 @@ if roles_to_add:
 if queues_to_add:
     print("Adding queue memberships...")
     for q in queues_to_add:
-        qi = q.get("queueid") or {}
-        queue_id = qi.get("queueid")
-        queue_name = qi.get("name", "?")
-        if not queue_id:
+        qid = queue_id(q)
+        qname = queue_name(q)
+        if not qid:
             continue
         try:
             post("queuemembers", {
-                "queueid@odata.bind": f"/queues({queue_id})",
+                "queueid@odata.bind": f"/queues({qid})",
                 "systemuserid@odata.bind": f"/systemusers({tgt_id})",
             })
-            print(f"  + Added to queue: {queue_name}")
+            print(f"  + Added to queue: {qname}")
             added_queues += 1
         except RuntimeError as e:
-            print(f"  ! Failed to add queue '{queue_name}': {e}")
+            print(f"  ! Failed to add queue '{qname}': {e}")
             errors += 1
         time.sleep(0.3)
 
