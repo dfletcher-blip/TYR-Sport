@@ -2,3 +2,6 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# WIP agent runtime data — changes every run, not source-controlled
+data/wip_snapshot.json
