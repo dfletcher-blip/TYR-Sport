@@ -128,6 +128,12 @@ from tools.security_roles import (
     remove_security_role,
     check_dashboard_access,
 )
+from tools.opportunity_stage_sync import (
+    get_opportunity_stage_options,
+    find_mismatched_closed_stages,
+    sync_opportunity_stage,
+    bulk_sync_closed_stages,
+)
 
 
 # ============================================================
@@ -159,6 +165,7 @@ YOUR CAPABILITIES:
 13. FORM CUSTOMIZATION — Add fields to entity forms, create custom fields (including dropdowns), inspect form layouts, publish changes
 14. MEMORY — Read and update persistent CRM memory to remember field names, entity names, and CRM-specific facts across sessions
 15. SECURITY ROLES — Find CRM users, inspect their security roles, assign or remove roles, check dashboard/chart access
+16. OPPORTUNITY STAGE SYNC — Find Won/Lost opportunities whose custom stage field is out of sync and bulk-fix them
 
 HOW YOU WORK:
 - Always start by READING data before making any changes
@@ -269,6 +276,12 @@ TOOL_REGISTRY = {
     # Dashboard extras
     "clone_dashboard":             clone_dashboard,
     "set_dashboard_description":   set_dashboard_description,
+
+    # Opportunity stage sync tools
+    "get_opportunity_stage_options":  get_opportunity_stage_options,
+    "find_mismatched_closed_stages":  find_mismatched_closed_stages,
+    "sync_opportunity_stage":         sync_opportunity_stage,
+    "bulk_sync_closed_stages":        bulk_sync_closed_stages,
 
     # Security role tools
     "find_crm_user":               find_crm_user,
@@ -1107,6 +1120,52 @@ TOOL_DEFINITIONS = [
                 "contact_id": {"type": "string", "description": "Contact GUID (provide this or lead_id)"},
                 "lead_id": {"type": "string", "description": "Lead GUID (provide this or contact_id)"},
                 "limit": {"type": "integer", "description": "Max emails to return (default 20)"},
+            },
+        },
+    },
+    # ── Opportunity stage sync ─────────────────────────────────
+    {
+        "name": "get_opportunity_stage_options",
+        "description": "List all available option set values for the custom opportunity stage field (e.g. tyr_stage). Use this to discover what 'Closed Won' and 'Closed Lost' are actually called in this CRM before syncing stages.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "stage_field": {"type": "string", "description": "Logical field name for the stage dropdown (default: tyr_stage)"},
+            },
+        },
+    },
+    {
+        "name": "find_mismatched_closed_stages",
+        "description": "Find Won or Lost opportunities where the custom stage field does not yet say 'Closed Won' or 'Closed Lost'. Returns two lists: won opportunities with wrong stage, and lost opportunities with wrong stage.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "stage_field": {"type": "string", "description": "Logical field name for the stage dropdown (default: tyr_stage)"},
+                "limit": {"type": "integer", "description": "Max records to scan (default 500)"},
+            },
+        },
+    },
+    {
+        "name": "sync_opportunity_stage",
+        "description": "Update the stage field on a single Won or Lost opportunity to match its actual status. Discovers the correct option value automatically — no hardcoding needed. Use dry_run=True to preview first.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "opportunity_id": {"type": "string", "description": "The GUID of the opportunity to fix"},
+                "stage_field": {"type": "string", "description": "Logical field name for the stage dropdown (default: tyr_stage)"},
+                "dry_run": {"type": "boolean", "description": "If true, describe the change without writing it (default false)"},
+            },
+            "required": ["opportunity_id"],
+        },
+    },
+    {
+        "name": "bulk_sync_closed_stages",
+        "description": "Find and fix ALL Won/Lost opportunities with a mismatched stage field in one operation. Always use dry_run=True first to preview what will be changed, then set dry_run=False to apply.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "stage_field": {"type": "string", "description": "Logical field name for the stage dropdown (default: tyr_stage)"},
+                "dry_run": {"type": "boolean", "description": "If true (default), preview changes without writing them"},
             },
         },
     },
