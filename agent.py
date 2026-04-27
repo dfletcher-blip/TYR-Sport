@@ -120,6 +120,14 @@ from tools.form_customization import (
     add_fields_to_form,
     create_custom_field,
 )
+from tools.security_roles import (
+    find_crm_user,
+    get_user_security_roles,
+    list_security_roles,
+    assign_security_role,
+    remove_security_role,
+    check_dashboard_access,
+)
 
 
 # ============================================================
@@ -150,6 +158,7 @@ YOUR CAPABILITIES:
 12. SPECIAL TERMS (STR) — Search STR records, check pending approvals, find expiring agreements, view by account, manage approval workflows
 13. FORM CUSTOMIZATION — Add fields to entity forms, create custom fields (including dropdowns), inspect form layouts, publish changes
 14. MEMORY — Read and update persistent CRM memory to remember field names, entity names, and CRM-specific facts across sessions
+15. SECURITY ROLES — Find CRM users, inspect their security roles, assign or remove roles, check dashboard/chart access
 
 HOW YOU WORK:
 - Always start by READING data before making any changes
@@ -260,6 +269,14 @@ TOOL_REGISTRY = {
     # Dashboard extras
     "clone_dashboard":             clone_dashboard,
     "set_dashboard_description":   set_dashboard_description,
+
+    # Security role tools
+    "find_crm_user":               find_crm_user,
+    "get_user_security_roles":     get_user_security_roles,
+    "list_security_roles":         list_security_roles,
+    "assign_security_role":        assign_security_role,
+    "remove_security_role":        remove_security_role,
+    "check_dashboard_access":      check_dashboard_access,
 
     # Bulk update tools
     "bulk_update_contacts":        bulk_update_contacts,
@@ -1091,6 +1108,74 @@ TOOL_DEFINITIONS = [
                 "lead_id": {"type": "string", "description": "Lead GUID (provide this or contact_id)"},
                 "limit": {"type": "integer", "description": "Max emails to return (default 20)"},
             },
+        },
+    },
+    # ── Security roles ─────────────────────────────────────────
+    {
+        "name": "find_crm_user",
+        "description": "Find a Dynamics 365 system user by full or partial name. Returns user IDs, email addresses, and account status.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Full or partial name to search for, e.g. 'Michael Gallindo'"},
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "get_user_security_roles",
+        "description": "List all security roles currently assigned to a CRM user. Use this to audit what a user can access.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "The systemuserid GUID of the user"},
+            },
+            "required": ["user_id"],
+        },
+    },
+    {
+        "name": "list_security_roles",
+        "description": "List security roles available in the CRM. Optionally filter by name. Use this to find the correct role ID before assigning.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "search_term": {"type": "string", "description": "Optional: filter roles by name, e.g. 'salesperson'"},
+            },
+        },
+    },
+    {
+        "name": "check_dashboard_access",
+        "description": "Audit whether a user has the security roles needed to view charts and dashboards. Returns current roles, an assessment, and the recommended role to assign if access is missing.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "The systemuserid GUID of the user to audit"},
+            },
+            "required": ["user_id"],
+        },
+    },
+    {
+        "name": "assign_security_role",
+        "description": "Assign a security role to a CRM user. Always call check_dashboard_access or get_user_security_roles first to confirm what role is needed.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "The systemuserid GUID of the user"},
+                "role_id": {"type": "string", "description": "The roleid GUID of the role to assign"},
+            },
+            "required": ["user_id", "role_id"],
+        },
+    },
+    {
+        "name": "remove_security_role",
+        "description": "Remove a security role from a CRM user. Use with care — this may restrict what the user can access.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "The systemuserid GUID of the user"},
+                "role_id": {"type": "string", "description": "The roleid GUID of the role to remove"},
+            },
+            "required": ["user_id", "role_id"],
         },
     },
 ]
