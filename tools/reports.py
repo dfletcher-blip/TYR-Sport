@@ -113,7 +113,7 @@ def get_pipeline_report() -> dict:
     Generate a live pipeline report showing opportunities by stage, owner, and value.
     """
     params = {
-        "$select": "opportunityid,name,estimatedvalue,closeprobability,statecode,estimatedclosedate,_ownerid_value",
+        "$select": "opportunityid,name,estimatedvalue,closeprobability,statecode,estimatedclosedate,_ownerid_value,tyr_stage",
         "$filter": "statecode eq 0",
         "$top": 500,
     }
@@ -121,6 +121,16 @@ def get_pipeline_report() -> dict:
 
     total_value = sum(o.get("estimatedvalue") or 0 for o in opps)
     weighted    = sum((o.get("estimatedvalue") or 0) * (o.get("closeprobability") or 0) / 100 for o in opps)
+
+    # By stage (tyr_stage field — matches what reps see on the form and in views)
+    stage_map: dict = {}
+    for o in opps:
+        stage = o.get("tyr_stage@OData.Community.Display.V1.FormattedValue") or "No Stage"
+        if stage not in stage_map:
+            stage_map[stage] = {"count": 0, "value": 0}
+        stage_map[stage]["count"] += 1
+        stage_map[stage]["value"] += o.get("estimatedvalue") or 0
+    by_stage = sorted(stage_map.items(), key=lambda x: x[1]["value"], reverse=True)
 
     # By owner
     owner_map: dict = {}
@@ -146,6 +156,7 @@ def get_pipeline_report() -> dict:
         "open_opportunities": len(opps),
         "total_pipeline_value": round(total_value, 2),
         "weighted_pipeline_value": round(weighted, 2),
+        "by_stage": [{"stage": s, "count": d["count"], "value": round(d["value"], 2)} for s, d in by_stage],
         "by_owner": [{"owner": o, "count": d["count"], "value": round(d["value"], 2)} for o, d in by_owner],
         "by_probability": buckets,
     }

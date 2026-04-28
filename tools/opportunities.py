@@ -5,7 +5,7 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from config.crm_connection import crm_get, crm_patch, crm_post
+from config.crm_connection import crm_get, crm_patch, crm_post, crm_action
 
 
 def search_opportunities(search_term: str = "", status: str = "open", limit: int = 50) -> dict:
@@ -25,7 +25,7 @@ def search_opportunities(search_term: str = "", status: str = "open", limit: int
 
     params = {
         "$top": limit,
-        "$select": "opportunityid,name,estimatedvalue,closeprobability,estimatedclosedate,statecode,statuscode,createdon,modifiedon,_ownerid_value",
+        "$select": "opportunityid,name,estimatedvalue,closeprobability,estimatedclosedate,statecode,statuscode,createdon,modifiedon,_ownerid_value,tyr_stage",
         "$expand": "customerid_account($select=name)",
         "$orderby": "modifiedon desc",
     }
@@ -54,6 +54,7 @@ def search_opportunities(search_term: str = "", status: str = "open", limit: int
                 "close_probability": f"{o.get('closeprobability', 0)}%",
                 "estimated_close": o.get("estimatedclosedate", ""),
                 "status": status_labels.get(o.get("statecode"), "Unknown"),
+                "stage": o.get("tyr_stage@OData.Community.Display.V1.FormattedValue", ""),
                 "account": (o.get("customerid_account") or {}).get("name", ""),
                 "owner": o.get("_ownerid_value@OData.Community.Display.V1.FormattedValue", ""),
                 "last_modified": o.get("modifiedon", ""),
@@ -86,6 +87,7 @@ def get_opportunity_details(opportunity_id: str) -> dict:
         "estimated_close": o.get("estimatedclosedate", ""),
         "actual_close": o.get("actualclosedate", ""),
         "status": status_labels.get(o.get("statecode"), "Unknown"),
+        "stage": o.get("tyr_stage@OData.Community.Display.V1.FormattedValue", ""),
         "account": (o.get("customerid_account") or {}).get("name", ""),
         "owner": (o.get("ownerid") or {}).get("fullname", ""),
         "created": o.get("createdon", ""),
@@ -121,7 +123,7 @@ def get_opportunity_summary() -> dict:
     """
     Get a high-level summary of all opportunities: pipeline value, win rate, stage breakdown.
     """
-    params_all  = {"$select": "opportunityid,statecode,estimatedvalue,actualvalue", "$top": 5000}
+    params_all  = {"$select": "opportunityid,statecode,estimatedvalue,actualvalue,tyr_stage", "$top": 5000}
     opps = crm_get("opportunities", params_all).get("value", [])
 
     total  = len(opps)
@@ -134,6 +136,11 @@ def get_opportunity_summary() -> dict:
     closed         = len(won) + len(lost)
     win_rate       = f"{len(won)/closed*100:.1f}%" if closed else "N/A"
 
+    stage_map: dict = {}
+    for o in open_:
+        stage = o.get("tyr_stage@OData.Community.Display.V1.FormattedValue") or "No Stage"
+        stage_map[stage] = stage_map.get(stage, 0) + 1
+
     return {
         "total_opportunities": total,
         "open": len(open_),
@@ -142,6 +149,87 @@ def get_opportunity_summary() -> dict:
         "pipeline_value": pipeline_value,
         "won_value": won_value,
         "win_rate": win_rate,
+        "open_by_stage": stage_map,
+    }
+
+
+def close_opportunity_won(
+    opportunity_id: str,
+    actual_value: float = None,
+    close_date: str = None,
+    description: str = "Opportunity Won",
+) -> dict:
+    """
+    Mark an opportunity as Closed Won.
+
+    Dynamics 365 requires the WinOpportunity action — a plain PATCH on statecode
+    is blocked by the platform and will fail.
+
+    opportunity_id: the GUID of the opportunity to close
+    actual_value:   the final deal value (defaults to the opportunity's estimated value)
+    close_date:     ISO date string YYYY-MM-DD (defaults to today)
+    description:    note to attach to the close activity
+    """
+    from datetime import datetime, timezone
+
+    actual_end = (
+        f"{close_date}T00:00:00Z"
+        if close_date
+        else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
+
+    opp_close: dict = {
+        "opportunityid@odata.bind": f"/opportunities({opportunity_id})",
+        "subject": description,
+        "actualend": actual_end,
+    }
+    if actual_value is not None:
+        opp_close["actualrevenue"] = actual_value
+
+    crm_action("WinOpportunity", {"opportunityclose": opp_close, "Status": 3})
+    return {
+        "success": True,
+        "opportunity_id": opportunity_id,
+        "status": "Closed Won",
+        "message": f"Opportunity {opportunity_id} marked as Closed Won.",
+    }
+
+
+def close_opportunity_lost(
+    opportunity_id: str,
+    close_date: str = None,
+    description: str = "Opportunity Lost",
+) -> dict:
+    """
+    Mark an opportunity as Closed Lost.
+
+    Dynamics 365 requires the LoseOpportunity action — a plain PATCH on statecode
+    is blocked by the platform and will fail.
+
+    opportunity_id: the GUID of the opportunity to close
+    close_date:     ISO date string YYYY-MM-DD (defaults to today)
+    description:    note to attach to the close activity
+    """
+    from datetime import datetime, timezone
+
+    actual_end = (
+        f"{close_date}T00:00:00Z"
+        if close_date
+        else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
+
+    opp_close = {
+        "opportunityid@odata.bind": f"/opportunities({opportunity_id})",
+        "subject": description,
+        "actualend": actual_end,
+    }
+
+    crm_action("LoseOpportunity", {"opportunityclose": opp_close, "Status": 4})
+    return {
+        "success": True,
+        "opportunity_id": opportunity_id,
+        "status": "Closed Lost",
+        "message": f"Opportunity {opportunity_id} marked as Closed Lost.",
     }
 
 
@@ -156,7 +244,7 @@ def find_stalled_opportunities(days_inactive: int = 30) -> dict:
 
     params = {
         "$top": 100,
-        "$select": "opportunityid,name,estimatedvalue,estimatedclosedate,modifiedon,_ownerid_value",
+        "$select": "opportunityid,name,estimatedvalue,estimatedclosedate,modifiedon,_ownerid_value,tyr_stage",
         "$filter": f"statecode eq 0 and modifiedon le {cutoff}",
         "$orderby": "modifiedon asc",
     }
@@ -175,6 +263,7 @@ def find_stalled_opportunities(days_inactive: int = 30) -> dict:
                 "value": o.get("estimatedvalue"),
                 "estimated_close": o.get("estimatedclosedate", ""),
                 "last_modified": o.get("modifiedon", ""),
+                "stage": o.get("tyr_stage@OData.Community.Display.V1.FormattedValue", ""),
                 "owner": o.get("_ownerid_value@OData.Community.Display.V1.FormattedValue", ""),
             }
             for o in opps

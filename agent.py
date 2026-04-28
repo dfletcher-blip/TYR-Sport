@@ -80,6 +80,8 @@ from tools.opportunities import (
     update_opportunity,
     get_opportunity_summary,
     find_stalled_opportunities,
+    close_opportunity_won,
+    close_opportunity_lost,
 )
 from tools.accounts import (
     search_accounts,
@@ -217,6 +219,8 @@ TOOL_REGISTRY = {
     "update_opportunity":          update_opportunity,
     "get_opportunity_summary":     get_opportunity_summary,
     "find_stalled_opportunities":  find_stalled_opportunities,
+    "close_opportunity_won":       close_opportunity_won,
+    "close_opportunity_lost":      close_opportunity_lost,
 
     # Account tools
     "search_accounts":             search_accounts,
@@ -595,7 +599,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "update_opportunity",
-        "description": "Update an opportunity's fields such as name, value, close probability, or estimated close date.",
+        "description": "Update an opportunity's fields such as name, value, close probability, stage (tyr_stage), or estimated close date. Do NOT use this to close a deal as won or lost — use close_opportunity_won or close_opportunity_lost instead.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -616,6 +620,41 @@ TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {"days_inactive": {"type": "integer", "description": "Days without activity (default 30)"}},
+        },
+    },
+    {
+        "name": "close_opportunity_won",
+        "description": (
+            "Mark an opportunity as Closed Won. "
+            "IMPORTANT: Use this instead of update_opportunity when a rep marks a deal as won — "
+            "Dynamics 365 requires the WinOpportunity action and will reject a plain field update."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "opportunity_id": {"type": "string", "description": "The opportunity GUID"},
+                "actual_value": {"type": "number", "description": "Final deal value (optional, defaults to estimated value)"},
+                "close_date": {"type": "string", "description": "Close date as YYYY-MM-DD (optional, defaults to today)"},
+                "description": {"type": "string", "description": "Note for the close activity (optional)"},
+            },
+            "required": ["opportunity_id"],
+        },
+    },
+    {
+        "name": "close_opportunity_lost",
+        "description": (
+            "Mark an opportunity as Closed Lost. "
+            "IMPORTANT: Use this instead of update_opportunity when a rep marks a deal as lost — "
+            "Dynamics 365 requires the LoseOpportunity action and will reject a plain field update."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "opportunity_id": {"type": "string", "description": "The opportunity GUID"},
+                "close_date": {"type": "string", "description": "Close date as YYYY-MM-DD (optional, defaults to today)"},
+                "description": {"type": "string", "description": "Note for the close activity (optional)"},
+            },
+            "required": ["opportunity_id"],
         },
     },
     # ── Accounts ───────────────────────────────────────────────
