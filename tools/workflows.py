@@ -35,16 +35,17 @@ def list_workflows(status: str = "all") -> dict:
     }
 
     # Status codes in Dynamics 365:
-    # statecode 0 = Active/Published, statecode 1 = Draft/Inactive
+    # statecode 1, statuscode 2 = Active
+    # statecode 0, statuscode 1 = Draft
+    # statecode 0, statuscode 3 = Inactive
     if status == "active":
         params["$filter"] = "statecode eq 1 and category eq 0"
     elif status == "inactive":
-        params["$filter"] = "statecode eq 0 and category eq 0"
+        params["$filter"] = "statecode eq 0 and statuscode eq 3 and category eq 0"
     elif status == "draft":
-        params["$filter"] = "statecode eq 0"
-
-    # Only fetch real workflows (category 0), not other process types
-    if "filter" not in str(params.get("$filter", "")):
+        params["$filter"] = "statecode eq 0 and statuscode eq 1 and category eq 0"
+    else:
+        # Only fetch real workflows (category 0), not other process types
         params["$filter"] = "category eq 0"
 
     result = crm_get("workflows", params)
@@ -123,7 +124,7 @@ def check_workflow_health() -> dict:
     params_jobs = {
         "$top": 200,
         "$select": "asyncoperationid,name,statecode,statuscode,friendlymessage,createdon,modifiedon",
-        "$filter": "statecode eq 3 and operationtype eq 10",  # Failed workflow jobs
+        "$filter": "statecode eq 2 and statuscode eq 31 and operationtype eq 10",  # Failed workflow jobs
         "$orderby": "modifiedon desc",
     }
 
