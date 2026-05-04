@@ -54,6 +54,7 @@ from tools.views_dashboards import (
     reorder_dashboard_components,
     clone_dashboard,
     set_dashboard_description,
+    create_chart,
 )
 from tools.bulk_updates import (
     bulk_update_contacts,
@@ -260,6 +261,7 @@ TOOL_REGISTRY = {
     # Dashboard extras
     "clone_dashboard":             clone_dashboard,
     "set_dashboard_description":   set_dashboard_description,
+    "create_chart":                create_chart,
 
     # Bulk update tools
     "bulk_update_contacts":        bulk_update_contacts,
@@ -925,6 +927,23 @@ TOOL_DEFINITIONS = [
         "input_schema": {"type": "object", "properties": {}},
     },
     # ── Dashboard extras ───────────────────────────────────────
+    {
+        "name": "create_chart",
+        "description": "Create a new chart (visualization) for an entity such as lead, opportunity, contact, or account. Supports column, bar, pie, and line chart types. The chart can then be added to a dashboard.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity":          {"type": "string", "description": "CRM entity to chart: 'lead', 'opportunity', 'contact', or 'account'"},
+                "title":           {"type": "string", "description": "Display name for the chart, e.g. 'Leads by Quality'"},
+                "chart_type":      {"type": "string", "enum": ["column", "bar", "pie", "line"], "description": "Chart type (default: column)"},
+                "group_by_field":  {"type": "string", "description": "Field to group/segment by, e.g. 'leadqualitycode', 'statuscode', 'tyr_stage'"},
+                "group_by_label":  {"type": "string", "description": "Human-readable label for the group-by axis"},
+                "aggregate":       {"type": "string", "enum": ["count", "sum", "avg"], "description": "Aggregation function (default: count)"},
+                "aggregate_field": {"type": "string", "description": "Field to aggregate for sum/avg (leave blank for count)"},
+            },
+            "required": ["entity", "title"],
+        },
+    },
     {
         "name": "clone_dashboard",
         "description": "Clone an existing dashboard under a new name.",

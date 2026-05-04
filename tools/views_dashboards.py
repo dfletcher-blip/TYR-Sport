@@ -849,6 +849,130 @@ def clone_dashboard(source_name_or_id: str, new_name: str, new_description: str 
     }
 
 
+def create_chart(
+    entity: str,
+    title: str,
+    chart_type: str = "column",
+    group_by_field: str = "",
+    group_by_label: str = "",
+    aggregate: str = "count",
+    aggregate_field: str = "",
+) -> dict:
+    """
+    Create a new chart (visualization) for an entity.
+
+    entity:           CRM entity to chart (e.g. "lead", "opportunity", "contact")
+    title:            Display name for the chart
+    chart_type:       "column", "bar", "pie", or "line"
+    group_by_field:   Field to group/segment by (e.g. "leadqualitycode", "statuscode", "tyr_stage")
+    group_by_label:   Human-readable label for the group-by axis
+    aggregate:        "count", "sum", or "avg"
+    aggregate_field:  Field to aggregate (leave blank for count, required for sum/avg)
+
+    Returns the chart ID and name on success.
+    """
+    entity = entity.lower()
+
+    # Pick the primary key field for the entity
+    pk_map = {
+        "lead":        "leadid",
+        "opportunity": "opportunityid",
+        "contact":     "contactid",
+        "account":     "accountid",
+    }
+    pk_field = pk_map.get(entity, f"{entity}id")
+
+    # Default sensible group-by fields per entity
+    default_group_by = {
+        "lead":        "leadqualitycode",
+        "opportunity": "statuscode",
+        "contact":     "statecode",
+        "account":     "statecode",
+    }
+    if not group_by_field:
+        group_by_field = default_group_by.get(entity, "statecode")
+
+    agg_func   = aggregate.lower()
+    agg_field  = aggregate_field if aggregate_field else pk_field
+    chart_type = chart_type.lower()
+
+    chart_type_map = {"column": "Column", "bar": "Bar", "pie": "Pie", "line": "Line"}
+    ms_chart_type  = chart_type_map.get(chart_type, "Column")
+
+    # Build presentation XML
+    presentation_xml = f"""<Chart Palette="None" PaletteCustomColors="149,189,66; 197,56,52; 55,118,193; 117,82,160; 49,171,204; 255,136,35; 168,203,104; 215,100,85; 134,177,226; 160,138,190; 93,186,215; 255,174,107">
+  <Series>
+    <Series ChartType="{ms_chart_type}" Name="series1" YValueMembers="aggregate_1"
+            IsValueShownAsLabel="True"
+            Font="Trebuchet MS, 8.25pt" LabelForeColor="59, 59, 59"
+            CustomProperties="PointWidth=0.75, MaxPixelPointWidth=40"/>
+  </Series>
+  <ChartAreas>
+    <ChartArea Name="Default">
+      <AxisY><MajorGrid LineColor="Gainsboro"/></AxisY>
+      <AxisX>
+        <MajorGrid LineColor="Gainsboro"/>
+        <MajorTickMark Enabled="false"/>
+        <LabelAutoFitMinFontSize>8</LabelAutoFitMinFontSize>
+      </AxisX>
+    </ChartArea>
+  </ChartAreas>
+  <Titles>
+    <Title Alignment="TopLeft" DockingOffset="-3"
+           Font="Trebuchet MS, 8.25pt, style=Bold" Color="59, 59, 59"/>
+  </Titles>
+  <Border LineWidth="0"/>
+</Chart>"""
+
+    # Build data description XML (fetchxml-based)
+    agg_attr = (
+        f'<attribute name="{agg_field}" aggregate="{agg_func}" alias="aggregate_1"/>'
+        if agg_func != "count" else
+        f'<attribute name="{pk_field}" aggregate="count" alias="aggregate_1"/>'
+    )
+
+    data_xml = f"""<datadefinition>
+  <fetchcollection>
+    <fetch mapping="logical" aggregate="true">
+      <entity name="{entity}">
+        {agg_attr}
+        <attribute name="{group_by_field}" groupby="true" alias="aggregate_2"/>
+      </entity>
+    </fetch>
+  </fetchcollection>
+  <categorycollection>
+    <category>
+      <measurecollection>
+        <measure alias="aggregate_1"/>
+      </measurecollection>
+    </category>
+  </categorycollection>
+</datadefinition>"""
+
+    chart_data = {
+        "name": title,
+        "primaryentitytypecode": entity,
+        "presentationxml": presentation_xml,
+        "datadescription": data_xml,
+        "isdefault": False,
+    }
+
+    try:
+        result = crm_post("savedqueryvisualizations", chart_data)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+    return {
+        "success": True,
+        "chart_name": title,
+        "entity": entity,
+        "chart_type": chart_type,
+        "group_by": group_by_field,
+        "aggregate": f"{agg_func}({agg_field})",
+        "message": f"Chart '{title}' created for the {entity} entity. It is now available when adding charts to dashboards.",
+    }
+
+
 def set_dashboard_description(name_or_id: str, description: str) -> dict:
     """
     Update the description of an existing dashboard.
