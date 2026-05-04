@@ -952,7 +952,7 @@ def create_chart(
     chart_data = {
         "name": title,
         "primaryentitytypecode": entity,
-        "presentationxml": presentation_xml,
+        "presentationdescription": presentation_xml,
         "datadescription": data_xml,
         "isdefault": False,
     }
@@ -970,6 +970,67 @@ def create_chart(
         "group_by": group_by_field,
         "aggregate": f"{agg_func}({agg_field})",
         "message": f"Chart '{title}' created for the {entity} entity. It is now available when adding charts to dashboards.",
+    }
+
+
+def get_chart_xml(chart_id: str) -> dict:
+    """
+    Fetch the full XML definition of an existing chart by its GUID.
+
+    chart_id: full GUID of the chart (savedqueryvisualizationid)
+
+    Returns the presentationdescription and datadescription XML so you
+    can inspect or copy the chart definition.
+    """
+    try:
+        result = crm_get(
+            f"savedqueryvisualizations({chart_id})",
+            {"$select": "savedqueryvisualizationid,name,primaryentitytypecode,presentationdescription,datadescription"},
+        )
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+    return {
+        "success": True,
+        "chart_id": result.get("savedqueryvisualizationid"),
+        "name": result.get("name"),
+        "entity": result.get("primaryentitytypecode"),
+        "presentation_xml": result.get("presentationdescription", ""),
+        "data_xml": result.get("datadescription", ""),
+    }
+
+
+def update_chart_xml(chart_id: str, presentation_xml: str = "", data_xml: str = "") -> dict:
+    """
+    Update the XML definition of an existing unmanaged chart.
+
+    chart_id:         full GUID of the chart to update
+    presentation_xml: new chart presentation XML (leave blank to keep existing)
+    data_xml:         new data description XML (leave blank to keep existing)
+
+    Note: this only works on unmanaged charts. Managed solution charts
+    are locked and changes will be silently ignored by Dynamics.
+    Use create_chart to create a new unmanaged chart instead.
+    """
+    updates = {}
+    if presentation_xml:
+        updates["presentationdescription"] = presentation_xml
+    if data_xml:
+        updates["datadescription"] = data_xml
+
+    if not updates:
+        return {"success": False, "error": "No XML provided — pass presentation_xml or data_xml"}
+
+    try:
+        crm_patch("savedqueryvisualizations", chart_id, updates)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+    return {
+        "success": True,
+        "chart_id": chart_id,
+        "fields_updated": list(updates.keys()),
+        "message": f"Chart {chart_id} updated. Note: if this chart is part of a managed solution, Dynamics may silently ignore the change — use create_chart to create a new unmanaged chart instead.",
     }
 
 

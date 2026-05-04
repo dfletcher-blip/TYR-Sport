@@ -55,6 +55,8 @@ from tools.views_dashboards import (
     clone_dashboard,
     set_dashboard_description,
     create_chart,
+    get_chart_xml,
+    update_chart_xml,
 )
 from tools.bulk_updates import (
     bulk_update_contacts,
@@ -262,6 +264,8 @@ TOOL_REGISTRY = {
     "clone_dashboard":             clone_dashboard,
     "set_dashboard_description":   set_dashboard_description,
     "create_chart":                create_chart,
+    "get_chart_xml":               get_chart_xml,
+    "update_chart_xml":            update_chart_xml,
 
     # Bulk update tools
     "bulk_update_contacts":        bulk_update_contacts,
@@ -942,6 +946,30 @@ TOOL_DEFINITIONS = [
                 "aggregate_field": {"type": "string", "description": "Field to aggregate for sum/avg (leave blank for count)"},
             },
             "required": ["entity", "title"],
+        },
+    },
+    {
+        "name": "get_chart_xml",
+        "description": "Fetch the full XML definition of an existing chart by its GUID. Use this to inspect a chart's presentation and data XML before modifying or cloning it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "chart_id": {"type": "string", "description": "Full GUID of the chart (savedqueryvisualizationid)"},
+            },
+            "required": ["chart_id"],
+        },
+    },
+    {
+        "name": "update_chart_xml",
+        "description": "Update the XML of an existing unmanaged chart. Does not work on managed solution charts — use create_chart to create a new unmanaged chart instead.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "chart_id":         {"type": "string", "description": "Full GUID of the chart to update"},
+                "presentation_xml": {"type": "string", "description": "New presentation XML for the chart"},
+                "data_xml":         {"type": "string", "description": "New data description XML for the chart"},
+            },
+            "required": ["chart_id"],
         },
     },
     {
