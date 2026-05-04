@@ -1143,7 +1143,7 @@ TOOL_DEFINITIONS = [
 ]
 
 
-def run_agent(user_request: str, dry_run: bool = False) -> str:
+def run_agent(user_request: str, dry_run: bool = False, session_messages: list = None) -> str:
     """
     Run the CRM agent with a plain English request.
 
