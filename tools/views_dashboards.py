@@ -901,34 +901,7 @@ def create_chart(
 
     # Build presentation XML — use attribute-only format; Dynamics rejects text-node children
     # on numeric properties (causes 'Unknown property name #text in System.Int32' error)
-    presentation_xml = f"""<Chart Palette="BrightPastel">
-  <Series>
-    <Series ChartType="{ms_chart_type}" Name="series1" IsValueShownAsLabel="true"
-            Font="{{0}}, 9.5px" LabelForeColor="59, 59, 59"
-            CustomProperties="PointWidth=0.75, MaxPixelPointWidth=40">
-      <SmartLabelStyle Enabled="True" />
-      <Points />
-    </Series>
-  </Series>
-  <ChartAreas>
-    <ChartArea BorderColor="White" BorderDashStyle="Solid">
-      <AxisY IsLabelAutoFit="false" TitleFont="{{0}}, 10.5px" TitleForeColor="59, 59, 59"
-             LineColor="165, 172, 181">
-        <MajorGrid LineColor="239, 242, 246" />
-        <LabelStyle Font="{{0}}, 9.5px" ForeColor="59, 59, 59" />
-      </AxisY>
-      <AxisX IsLabelAutoFit="false" TitleFont="{{0}}, 10.5px" TitleForeColor="59, 59, 59"
-             LineColor="165, 172, 181">
-        <MajorGrid LineColor="239, 242, 246" />
-        <LabelStyle Font="{{0}}, 9.5px" ForeColor="59, 59, 59" />
-      </AxisX>
-    </ChartArea>
-  </ChartAreas>
-  <Titles>
-    <Title DockingOffset="-3" Font="{{0}}, 9.5px" ForeColor="59, 59, 59"
-           Alignment="TopLeft"></Title>
-  </Titles>
-</Chart>"""
+    presentation_xml = f'<Chart><Series><Series ChartType="{ms_chart_type}" Name="series1" IsValueShownAsLabel="true"><Points /></Series></Series><ChartAreas><ChartArea Name="Default" /></ChartAreas></Chart>'
 
     # Build data description XML (fetchxml-based)
     agg_attr = (
