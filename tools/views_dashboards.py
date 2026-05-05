@@ -899,29 +899,37 @@ def create_chart(
     chart_type_map = {"column": "Column", "bar": "Bar", "pie": "Pie", "line": "Line"}
     ms_chart_type  = chart_type_map.get(chart_type, "Column")
 
-    # Build presentation XML
-    presentation_xml = f"""<Chart Palette="None" PaletteCustomColors="149,189,66; 197,56,52; 55,118,193; 117,82,160; 49,171,204; 255,136,35; 168,203,104; 215,100,85; 134,177,226; 160,138,190; 93,186,215; 255,174,107">
+    # Build presentation XML — use attribute-only format; Dynamics rejects text-node children
+    # on numeric properties (causes 'Unknown property name #text in System.Int32' error)
+    presentation_xml = f"""<Chart Palette="BrightPastel">
   <Series>
-    <Series ChartType="{ms_chart_type}" Name="series1" YValueMembers="aggregate_1"
-            IsValueShownAsLabel="True"
-            Font="Trebuchet MS, 8.25pt" LabelForeColor="59, 59, 59"
-            CustomProperties="PointWidth=0.75, MaxPixelPointWidth=40"/>
+    <Series ChartType="{ms_chart_type}" Name="series1" IsValueShownAsLabel="true"
+            Font="{{0}}, 9.5px" LabelForeColor="59, 59, 59"
+            CustomProperties="PointWidth=0.75, MaxPixelPointWidth=40">
+      <SmartLabelStyle Enabled="True" />
+      <Points />
+    </Series>
   </Series>
   <ChartAreas>
-    <ChartArea Name="Default">
-      <AxisY><MajorGrid LineColor="Gainsboro"/></AxisY>
-      <AxisX>
-        <MajorGrid LineColor="Gainsboro"/>
-        <MajorTickMark Enabled="false"/>
-        <LabelAutoFitMinFontSize>8</LabelAutoFitMinFontSize>
+    <ChartArea BorderColor="White" BorderDashStyle="Solid">
+      <AxisY IsLabelAutoFit="false" TitleFont="{{0}}, 10.5px" TitleForeColor="59, 59, 59"
+             LineColor="165, 172, 181">
+        <MajorGrid LineColor="239, 242, 246" />
+        <LabelStyle Font="{{0}}, 9.5px" ForeColor="59, 59, 59" />
+      </AxisY>
+      <AxisX IsLabelAutoFit="false" TitleFont="{{0}}, 10.5px" TitleForeColor="59, 59, 59"
+             LineColor="165, 172, 181">
+        <MajorGrid LineColor="239, 242, 246" />
+        <LabelStyle Font="{{0}}, 9.5px" ForeColor="59, 59, 59" />
       </AxisX>
     </ChartArea>
   </ChartAreas>
   <Titles>
-    <Title Alignment="TopLeft" DockingOffset="-3"
-           Font="Trebuchet MS, 8.25pt, style=Bold" Color="59, 59, 59"/>
+    <Title DockingOffset="-3" Font="{{0}}, 9.5px" ForeColor="59, 59, 59"
+           Alignment="TopLeft"></Title>
   </Titles>
-  <Border LineWidth="0"/>
+  <BorderSkin PageColor="Control" BackColor="CornflowerBlue"
+              PageGradientEndColor="WhiteSmoke" />
 </Chart>"""
 
     # Build data description XML (fetchxml-based)
