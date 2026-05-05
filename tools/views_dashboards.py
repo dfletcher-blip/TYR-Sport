@@ -928,8 +928,6 @@ def create_chart(
     <Title DockingOffset="-3" Font="{{0}}, 9.5px" ForeColor="59, 59, 59"
            Alignment="TopLeft"></Title>
   </Titles>
-  <BorderSkin PageColor="Control" BackColor="CornflowerBlue"
-              PageGradientEndColor="WhiteSmoke" />
 </Chart>"""
 
     # Build data description XML (fetchxml-based)
