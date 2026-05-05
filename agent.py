@@ -57,6 +57,7 @@ from tools.views_dashboards import (
     create_chart,
     get_chart_xml,
     update_chart_xml,
+    delete_chart,
 )
 from tools.bulk_updates import (
     bulk_update_contacts,
@@ -266,6 +267,7 @@ TOOL_REGISTRY = {
     "create_chart":                create_chart,
     "get_chart_xml":               get_chart_xml,
     "update_chart_xml":            update_chart_xml,
+    "delete_chart":                delete_chart,
 
     # Bulk update tools
     "bulk_update_contacts":        bulk_update_contacts,
@@ -968,6 +970,17 @@ TOOL_DEFINITIONS = [
                 "chart_id":         {"type": "string", "description": "Full GUID of the chart to update"},
                 "presentation_xml": {"type": "string", "description": "New presentation XML for the chart"},
                 "data_xml":         {"type": "string", "description": "New data description XML for the chart"},
+            },
+            "required": ["chart_id"],
+        },
+    },
+    {
+        "name": "delete_chart",
+        "description": "Delete a chart (visualization) by its GUID. Only works on unmanaged charts. Use get_chart_xml first to confirm the chart ID.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "chart_id": {"type": "string", "description": "Full GUID of the chart to delete"},
             },
             "required": ["chart_id"],
         },

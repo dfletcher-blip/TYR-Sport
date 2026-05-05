@@ -1013,6 +1013,27 @@ def update_chart_xml(chart_id: str, presentation_xml: str = "", data_xml: str = 
     }
 
 
+def delete_chart(chart_id: str) -> dict:
+    """
+    Delete a chart (savedqueryvisualization) by its GUID.
+
+    chart_id: full GUID of the chart to delete
+
+    Note: only unmanaged charts can be deleted. Managed solution charts
+    will return an error from Dynamics.
+    """
+    from config.crm_connection import crm_delete
+    try:
+        crm_delete("savedqueryvisualizations", chart_id)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    return {
+        "success": True,
+        "chart_id": chart_id,
+        "message": f"Chart {chart_id} deleted successfully.",
+    }
+
+
 def set_dashboard_description(name_or_id: str, description: str) -> dict:
     """
     Update the description of an existing dashboard.
