@@ -1156,15 +1156,16 @@ TOOL_DEFINITIONS = [
 ]
 
 
-def run_agent(user_request: str, dry_run: bool = False, session_messages: list = None) -> str:
+def run_agent(user_request: str, dry_run: bool = False, session_messages: list = None) -> tuple:
     """
     Run the CRM agent with a plain English request.
 
     user_request: what you want the agent to do (plain English)
     dry_run: if True, Claude will plan actions but NOT execute writes
              Use this to preview what the agent would do before committing.
+    session_messages: prior conversation history to maintain context across turns
 
-    Returns Claude's response as a string.
+    Returns (response_text, updated_messages) so the caller can pass history to the next call.
     """
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -1187,7 +1188,9 @@ def run_agent(user_request: str, dry_run: bool = False, session_messages: list =
             "that create, update, or delete records. Instead, describe what you WOULD do."
         )
 
-    messages = [{"role": "user", "content": user_request}]
+    # Build message list — prepend prior history if provided
+    prior = session_messages if session_messages else []
+    messages = prior + [{"role": "user", "content": user_request}]
 
     # Set up logging
     os.makedirs("logs", exist_ok=True)
@@ -1221,7 +1224,9 @@ def run_agent(user_request: str, dry_run: bool = False, session_messages: list =
             with open(log_file, "w") as f:
                 json.dump({"request": user_request, "actions": log_entries}, f, indent=2)
 
-            return final_text
+            # Append this exchange to history for the caller
+            messages.append({"role": "assistant", "content": response.content})
+            return final_text, messages
 
         # Claude wants to use a tool — execute it
         if response.stop_reason == "tool_use":
@@ -1268,4 +1273,4 @@ def run_agent(user_request: str, dry_run: bool = False, session_messages: list =
             # Unexpected stop reason — break the loop
             break
 
-    return "Task completed."
+    return "Task completed.", messages

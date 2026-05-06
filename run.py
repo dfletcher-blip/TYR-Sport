@@ -132,6 +132,9 @@ def main():
 
     print("\n✓ Ready! Enter your request below.\n")
 
+    # Conversation history — carries context across turns in this session
+    conversation_history = []
+
     # Step 3: Interactive loop — keep asking for requests
     while True:
         try:
@@ -151,6 +154,11 @@ def main():
             print(HELP_TEXT)
             continue
 
+        if user_input.lower() in ("new", "new chat", "reset", "clear"):
+            conversation_history = []
+            print("\n  [Conversation history cleared — starting fresh]\n")
+            continue
+
         # Check for dry run prefix
         dry_run = False
         request = user_input
@@ -160,9 +168,11 @@ def main():
             request = user_input[8:].strip()
             print("\n  [DRY RUN MODE — no changes will be made]\n")
 
-        # Run the agent
+        # Run the agent, passing and receiving conversation history
         try:
-            response = run_agent(request, dry_run=dry_run)
+            response, conversation_history = run_agent(
+                request, dry_run=dry_run, session_messages=conversation_history
+            )
             print(f"\n{'═' * 60}")
             print(f"Agent:\n{response}")
             print(f"{'═' * 60}\n")
