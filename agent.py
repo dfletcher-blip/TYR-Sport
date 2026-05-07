@@ -124,6 +124,13 @@ from tools.form_customization import (
     add_fields_to_form,
     create_custom_field,
 )
+from tools.security_roles import (
+    get_user_security_roles,
+    compare_user_roles,
+    assign_role_to_user,
+    remove_role_from_user,
+    list_available_roles,
+)
 
 
 # ============================================================
@@ -154,6 +161,7 @@ YOUR CAPABILITIES:
 12. SPECIAL TERMS (STR) — Search STR records, check pending approvals, find expiring agreements, view by account, manage approval workflows
 13. FORM CUSTOMIZATION — Add fields to entity forms, create custom fields (including dropdowns), inspect form layouts, publish changes
 14. MEMORY — Read and update persistent CRM memory to remember field names, entity names, and CRM-specific facts across sessions
+15. SECURITY ROLES — Look up user security roles, compare roles between users, assign or remove roles to fix access issues
 
 HOW YOU WORK:
 - Always start by READING data before making any changes
@@ -268,6 +276,13 @@ TOOL_REGISTRY = {
     "get_chart_xml":               get_chart_xml,
     "update_chart_xml":            update_chart_xml,
     "delete_chart":                delete_chart,
+
+    # Security role tools
+    "get_user_security_roles":     get_user_security_roles,
+    "compare_user_roles":          compare_user_roles,
+    "assign_role_to_user":         assign_role_to_user,
+    "remove_role_from_user":       remove_role_from_user,
+    "list_available_roles":        list_available_roles,
 
     # Bulk update tools
     "bulk_update_contacts":        bulk_update_contacts,
@@ -983,6 +998,62 @@ TOOL_DEFINITIONS = [
                 "chart_id": {"type": "string", "description": "Full GUID of the chart to delete"},
             },
             "required": ["chart_id"],
+        },
+    },
+    {
+        "name": "get_user_security_roles",
+        "description": "Get all security roles currently assigned to a CRM user. Use this to diagnose access/permission issues.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_name": {"type": "string", "description": "Full or partial name of the user (e.g. 'Jennifer Brandow')"},
+            },
+            "required": ["user_name"],
+        },
+    },
+    {
+        "name": "compare_user_roles",
+        "description": "Compare security roles between two users to find what one user has that the other is missing. Useful for diagnosing why one user can't access something.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_a": {"type": "string", "description": "Name of the user with the problem"},
+                "user_b": {"type": "string", "description": "Name of a working user to compare against"},
+            },
+            "required": ["user_a", "user_b"],
+        },
+    },
+    {
+        "name": "assign_role_to_user",
+        "description": "Assign a security role to a CRM user. Use compare_user_roles first to identify the missing role.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_name": {"type": "string", "description": "Full or partial name of the user"},
+                "role_name": {"type": "string", "description": "Exact or partial name of the security role to assign"},
+            },
+            "required": ["user_name", "role_name"],
+        },
+    },
+    {
+        "name": "remove_role_from_user",
+        "description": "Remove a security role from a CRM user.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_name": {"type": "string", "description": "Full or partial name of the user"},
+                "role_name": {"type": "string", "description": "Exact or partial name of the role to remove"},
+            },
+            "required": ["user_name", "role_name"],
+        },
+    },
+    {
+        "name": "list_available_roles",
+        "description": "List all security roles available in the CRM. Use this to find the correct role name before assigning.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
         },
     },
     {
