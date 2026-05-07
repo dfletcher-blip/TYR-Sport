@@ -974,6 +974,7 @@ TOOL_DEFINITIONS = [
                 "group_by_label":  {"type": "string", "description": "Human-readable label for the group-by axis"},
                 "aggregate":       {"type": "string", "enum": ["count", "sum", "avg"], "description": "Aggregation function (default: count)"},
                 "aggregate_field": {"type": "string", "description": "Field to aggregate for sum/avg (leave blank for count)"},
+                "date_grouping":   {"type": "string", "enum": ["month", "year", "quarter", "week", "day"], "description": "Use when grouping by a date field — e.g. 'month' to group estimatedclosedate by month"},
             },
             "required": ["entity", "title"],
         },

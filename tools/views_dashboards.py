@@ -857,6 +857,7 @@ def create_chart(
     group_by_label: str = "",
     aggregate: str = "count",
     aggregate_field: str = "",
+    date_grouping: str = "",
 ) -> dict:
     """
     Create a new chart (visualization) for an entity.
@@ -868,6 +869,8 @@ def create_chart(
     group_by_label:   Human-readable label for the group-by axis
     aggregate:        "count", "sum", or "avg"
     aggregate_field:  Field to aggregate (leave blank for count, required for sum/avg)
+    date_grouping:    For date fields — "month", "year", "quarter", "week", or "day"
+                      e.g. use "month" when grouping by estimatedclosedate per month
 
     Returns the chart ID and name on success.
     """
@@ -910,12 +913,15 @@ def create_chart(
         f'<attribute name="{pk_field}" aggregate="count" alias="aggregate_1"/>'
     )
 
+    # Add dategrouping attribute when grouping by a date field
+    date_grouping_attr = f' dategrouping="{date_grouping.lower()}"' if date_grouping else ""
+
     data_xml = f"""<datadefinition>
   <fetchcollection>
     <fetch mapping="logical" aggregate="true">
       <entity name="{entity}">
         {agg_attr}
-        <attribute name="{group_by_field}" groupby="true" alias="aggregate_2"/>
+        <attribute name="{group_by_field}" groupby="true" alias="aggregate_2"{date_grouping_attr}/>
       </entity>
     </fetch>
   </fetchcollection>
@@ -947,6 +953,7 @@ def create_chart(
         "entity": entity,
         "chart_type": chart_type,
         "group_by": group_by_field,
+        "date_grouping": date_grouping or "none",
         "aggregate": f"{agg_func}({agg_field})",
         "message": f"Chart '{title}' created for the {entity} entity. It is now available when adding charts to dashboards.",
     }
