@@ -40,6 +40,7 @@ from tools.workflows import (
     get_workflows_by_entity,
     retry_failed_workflow_runs,
     clone_workflow,
+    delete_workflow,
 )
 from tools.memory import update_crm_memory, read_crm_memory
 from tools.views_dashboards import (
@@ -211,6 +212,7 @@ TOOL_REGISTRY = {
     "get_workflows_by_entity":     get_workflows_by_entity,
     "retry_failed_workflow_runs":  retry_failed_workflow_runs,
     "clone_workflow":              clone_workflow,
+    "delete_workflow":             delete_workflow,
 
     # Views & dashboard tools
     "list_views":                  list_views,
@@ -494,6 +496,17 @@ TOOL_DEFINITIONS = [
                 "new_name": {"type": "string", "description": "Name for the cloned workflow"},
             },
             "required": ["workflow_id", "new_name"],
+        },
+    },
+    {
+        "name": "delete_workflow",
+        "description": "Permanently delete an inactive or draft workflow. The workflow must be deactivated first. Use this to remove duplicate or abandoned workflows.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string", "description": "The GUID of the workflow to delete"},
+            },
+            "required": ["workflow_id"],
         },
     },
     {

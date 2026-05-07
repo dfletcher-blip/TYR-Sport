@@ -13,7 +13,7 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from config.crm_connection import crm_get, crm_patch, crm_post
+from config.crm_connection import crm_get, crm_patch, crm_post, crm_delete
 
 
 def list_workflows(status: str = "all") -> dict:
@@ -444,4 +444,37 @@ def clone_workflow(workflow_id: str, new_name: str) -> dict:
         "new_workflow_name": new_name,
         "status": "Draft — activate it when ready",
         "message": f"Workflow cloned as '{new_name}'. It is in Draft status.",
+    }
+
+
+def delete_workflow(workflow_id: str) -> dict:
+    """
+    Permanently delete a workflow (process). The workflow must be inactive/draft first.
+    Use deactivate_workflow before deleting an active workflow.
+
+    workflow_id: the GUID of the workflow to delete
+    """
+    # Fetch the workflow first to confirm it exists and check its state
+    wf = crm_get(f"workflows({workflow_id})", {
+        "$select": "name,statecode,statuscode,category",
+    })
+
+    name = wf.get("name", workflow_id)
+    statecode = wf.get("statecode", -1)
+
+    if statecode == 1:
+        return {
+            "success": False,
+            "workflow_id": workflow_id,
+            "name": name,
+            "error": "Workflow is still active. Call deactivate_workflow first, then delete.",
+        }
+
+    crm_delete("workflows", workflow_id)
+
+    return {
+        "success": True,
+        "workflow_id": workflow_id,
+        "name": name,
+        "message": f"Workflow '{name}' has been permanently deleted.",
     }
