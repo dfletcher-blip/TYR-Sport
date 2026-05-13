@@ -107,6 +107,8 @@ from tools.teams import (
     get_team_details,
     search_teams,
     get_team_summary,
+    add_team_member,
+    remove_team_member,
 )
 from tools.special_terms import (
     search_special_terms,
@@ -270,6 +272,8 @@ TOOL_REGISTRY = {
     "get_team_details":            get_team_details,
     "search_teams":                search_teams,
     "get_team_summary":            get_team_summary,
+    "add_team_member":             add_team_member,
+    "remove_team_member":          remove_team_member,
 
     # Dashboard extras
     "clone_dashboard":             clone_dashboard,
@@ -959,6 +963,30 @@ TOOL_DEFINITIONS = [
         "name": "get_team_summary",
         "description": "Get a summary of all teams: counts by type and business unit.",
         "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "add_team_member",
+        "description": "Add a user to a CRM team by team name and user name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "team_name": {"type": "string", "description": "Full or partial name of the team (e.g. 'Finance')"},
+                "user_name": {"type": "string", "description": "Full or partial name of the user to add (e.g. 'Jaaber Saidi')"},
+            },
+            "required": ["team_name", "user_name"],
+        },
+    },
+    {
+        "name": "remove_team_member",
+        "description": "Remove a user from a CRM team.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "team_name": {"type": "string", "description": "Full or partial name of the team"},
+                "user_name": {"type": "string", "description": "Full or partial name of the user to remove"},
+            },
+            "required": ["team_name", "user_name"],
+        },
     },
     # ── Dashboard extras ───────────────────────────────────────
     {

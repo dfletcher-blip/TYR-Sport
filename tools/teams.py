@@ -5,7 +5,7 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from config.crm_connection import crm_get, crm_patch, crm_post
+from config.crm_connection import crm_get, crm_patch, crm_post, crm_delete
 
 
 def list_teams(team_type: str = "all") -> dict:
@@ -60,9 +60,9 @@ def get_team_details(team_id: str) -> dict:
     params = {"$expand": "businessunitid($select=name)"}
     t = crm_get(f"teams({team_id})", params)
 
-    # Get team members
+    # Get team members — only select fields that exist on systemuser via this nav property
     members_result = crm_get(f"teams({team_id})/teammembership_association", {
-        "$select": "fullname,emailaddress1,jobtitle",
+        "$select": "fullname,jobtitle,systemuserid",
         "$top": 200,
     })
     members = members_result.get("value", [])
@@ -81,11 +81,111 @@ def get_team_details(team_id: str) -> dict:
         "members": [
             {
                 "name": m.get("fullname", ""),
-                "email": m.get("emailaddress1", ""),
+                "id": m.get("systemuserid", ""),
                 "title": m.get("jobtitle", ""),
             }
             for m in members
         ],
+    }
+
+
+def add_team_member(team_name: str, user_name: str) -> dict:
+    """
+    Add a user to a team.
+
+    team_name: full or partial name of the team (e.g. "Finance")
+    user_name: full or partial name of the user to add (e.g. "Jaaber Saidi")
+    """
+    import os
+
+    # Find the team
+    teams = crm_get("teams", {
+        "$select": "teamid,name",
+        "$filter": f"contains(name,'{team_name}')",
+        "$top": 5,
+    }).get("value", [])
+
+    if not teams:
+        return {"error": f"No team found matching '{team_name}'"}
+    if len(teams) > 1:
+        names = [t["name"] for t in teams]
+        exact = [t for t in teams if t["name"].lower() == team_name.lower()]
+        teams = exact if exact else teams[:1]
+        if len(teams) > 1:
+            return {"error": f"Multiple teams match '{team_name}': {names}. Use a more specific name."}
+
+    team = teams[0]
+    team_id = team["teamid"]
+
+    # Find the user
+    users = crm_get("systemusers", {
+        "$select": "systemuserid,fullname",
+        "$filter": f"contains(fullname,'{user_name}') and isdisabled eq false",
+        "$top": 3,
+    }).get("value", [])
+
+    if not users:
+        return {"error": f"No active user found matching '{user_name}'"}
+    if len(users) > 1:
+        return {"error": f"Multiple users match '{user_name}': {[u['fullname'] for u in users]}. Use a more specific name."}
+
+    user = users[0]
+    user_id = user["systemuserid"]
+
+    dynamics_url = os.getenv("DYNAMICS_URL", "").rstrip("/")
+    crm_post(
+        f"teams({team_id})/teammembership_association/$ref",
+        {"@odata.id": f"{dynamics_url}/api/data/v9.2/systemusers({user_id})"},
+    )
+
+    return {
+        "success": True,
+        "message": f"{user['fullname']} has been added to the '{team['name']}' team.",
+        "team_id": team_id,
+        "user_id": user_id,
+    }
+
+
+def remove_team_member(team_name: str, user_name: str) -> dict:
+    """
+    Remove a user from a team.
+
+    team_name: full or partial name of the team
+    user_name: full or partial name of the user to remove
+    """
+    # Find team
+    teams = crm_get("teams", {
+        "$select": "teamid,name",
+        "$filter": f"contains(name,'{team_name}')",
+        "$top": 5,
+    }).get("value", [])
+
+    if not teams:
+        return {"error": f"No team found matching '{team_name}'"}
+    exact = [t for t in teams if t["name"].lower() == team_name.lower()]
+    team = exact[0] if exact else teams[0]
+    team_id = team["teamid"]
+
+    # Find user
+    users = crm_get("systemusers", {
+        "$select": "systemuserid,fullname",
+        "$filter": f"contains(fullname,'{user_name}') and isdisabled eq false",
+        "$top": 3,
+    }).get("value", [])
+
+    if not users:
+        return {"error": f"No active user found matching '{user_name}'"}
+    if len(users) > 1:
+        return {"error": f"Multiple users match '{user_name}': {[u['fullname'] for u in users]}"}
+
+    user = users[0]
+    user_id = user["systemuserid"]
+
+    crm_delete(f"teams({team_id})/teammembership_association({user_id})")
+
+    return {
+        "success": True,
+        "message": f"{user['fullname']} has been removed from the '{team['name']}' team.",
     }
 
 
