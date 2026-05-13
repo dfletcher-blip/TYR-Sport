@@ -60,33 +60,32 @@ def get_team_details(team_id: str) -> dict:
     params = {"$expand": "businessunitid($select=name)"}
     t = crm_get(f"teams({team_id})", params)
 
-    # Get team members — only select fields that exist on systemuser via this nav property
+    # Get team members — fetch IDs first, then look up each user for email
     members_result = crm_get(f"teams({team_id})/teammembership_association", {
         "$select": "fullname,jobtitle,systemuserid",
         "$top": 200,
     })
-    members = members_result.get("value", [])
+    raw_members = members_result.get("value", [])
 
-    type_labels = {0: "Owner", 1: "Access", 2: "AAD Security Group", 3: "AAD Office Group"}
-
-    return {
-        "id": t.get("teamid"),
-        "name": t.get("name", ""),
-        "description": t.get("description", ""),
-        "type": type_labels.get(t.get("teamtype"), "Unknown"),
-        "business_unit": (t.get("businessunitid") or {}).get("name", ""),
-        "created": t.get("createdon", ""),
-        "last_modified": t.get("modifiedon", ""),
-        "member_count": len(members),
-        "members": [
-            {
-                "name": m.get("fullname", ""),
-                "id": m.get("systemuserid", ""),
-                "title": m.get("jobtitle", ""),
-            }
-            for m in members
-        ],
-    }
+    # Enrich with email by querying each user individually
+    members = []
+    for m in raw_members:
+        uid = m.get("systemuserid", "")
+        email = ""
+        if uid:
+            try:
+                user_detail = crm_get(f"systemusers({uid})", {
+                    "$select": "internalemailaddress,domainname",
+                })
+                email = user_detail.get("internalemailaddress") or user_detail.get("domainname", "")
+            except Exception:
+                pass
+        members.append({
+            "name": m.get("fullname", ""),
+            "id": uid,
+            "title": m.get("jobtitle", ""),
+            "email": email,
+        })
 
 
 def add_team_member(team_name: str, user_name: str) -> dict:
