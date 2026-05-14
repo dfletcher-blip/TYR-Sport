@@ -60,32 +60,49 @@ def get_team_details(team_id: str) -> dict:
     params = {"$expand": "businessunitid($select=name)"}
     t = crm_get(f"teams({team_id})", params)
 
-    # Get team members — fetch IDs first, then look up each user for email
-    members_result = crm_get(f"teams({team_id})/teammembership_association", {
-        "$select": "fullname,jobtitle,systemuserid",
-        "$top": 200,
-    })
-    raw_members = members_result.get("value", [])
+    # Query the teammemberships junction table directly (more reliable than nav property)
+    try:
+        memberships = crm_get("teammemberships", {
+            "$filter": f"teamid eq {team_id}",
+            "$select": "systemuserid",
+            "$top": 200,
+        }).get("value", [])
+    except Exception:
+        memberships = []
 
-    # Enrich with email by querying each user individually
+    # Enrich with user details
     members = []
-    for m in raw_members:
+    for m in memberships:
         uid = m.get("systemuserid", "")
-        email = ""
-        if uid:
-            try:
-                user_detail = crm_get(f"systemusers({uid})", {
-                    "$select": "internalemailaddress,domainname",
+        if not uid:
+            continue
+        try:
+            user_detail = crm_get(f"systemusers({uid})", {
+                "$select": "fullname,internalemailaddress,jobtitle,isdisabled",
+            })
+            if not user_detail.get("isdisabled"):
+                members.append({
+                    "name": user_detail.get("fullname", ""),
+                    "id": uid,
+                    "title": user_detail.get("jobtitle", ""),
+                    "email": user_detail.get("internalemailaddress", ""),
                 })
-                email = user_detail.get("internalemailaddress") or user_detail.get("domainname", "")
-            except Exception:
-                pass
-        members.append({
-            "name": m.get("fullname", ""),
-            "id": uid,
-            "title": m.get("jobtitle", ""),
-            "email": email,
-        })
+        except Exception:
+            pass
+
+    type_labels = {0: "Owner", 1: "Access", 2: "AAD Security Group", 3: "AAD Office Group"}
+
+    return {
+        "id": t.get("teamid"),
+        "name": t.get("name", ""),
+        "description": t.get("description", ""),
+        "type": type_labels.get(t.get("teamtype"), "Unknown"),
+        "business_unit": (t.get("businessunitid") or {}).get("name", ""),
+        "created": t.get("createdon", ""),
+        "last_modified": t.get("modifiedon", ""),
+        "member_count": len(members),
+        "members": members,
+    }
 
 
 def add_team_member(team_name: str, user_name: str) -> dict:
