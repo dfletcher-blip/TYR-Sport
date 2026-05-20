@@ -99,7 +99,7 @@ def patch(path, body):
 
 # ── 1. Find Sales Rep security role(s) ───────────────────────────────────────
 print("Looking up Sales Rep security role(s)...")
-all_roles = get("roles", {"$select": "roleid,name", "$filter": "statecode eq 0"})
+all_roles = get("roles", {"$select": "roleid,name"})
 sales_roles = [
     r for r in all_roles.get("value", [])
     if any(kw in r["name"].lower() for kw in SALES_REP_ROLE_KEYWORDS)
