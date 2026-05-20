@@ -295,25 +295,43 @@ errors = 0
 # 5a. Fix entity-level Contact Write privilege
 if role_privilege_changes:
     print("Updating entity-level Contact Write privilege...")
-    for role, action in role_privilege_changes:
-        role_id = role["roleid"]
-        try:
-            post(
-                f"roles({role_id})/Microsoft.Dynamics.CRM.AddPrivilegesRole",
-                {
-                    "Privileges": [
-                        {
-                            "Depth": str(TARGET_DEPTH),
-                            "Name": "prvWriteContact",
-                        }
-                    ]
-                },
-            )
-            print(f"  + {role['name']}: prvWriteContact set to BusinessUnit")
-        except RuntimeError as e:
-            print(f"  ! {role['name']}: {e}")
-            errors += 1
-        time.sleep(0.3)
+
+    # AddPrivilegesRole requires a PrivilegeId GUID, not a name
+    write_contact_priv_id = None
+    try:
+        priv_lookup = get(
+            "privileges",
+            {"$select": "privilegeid,name", "$filter": "name eq 'prvWriteContact'"},
+        )
+        hits = priv_lookup.get("value", [])
+        if hits:
+            write_contact_priv_id = hits[0]["privilegeid"]
+            print(f"  prvWriteContact privilege ID: {write_contact_priv_id}")
+        else:
+            print("  ! Could not find prvWriteContact in privileges table — skipping entity-level update.")
+    except RuntimeError as e:
+        print(f"  ! Privilege lookup failed: {e}")
+
+    if write_contact_priv_id:
+        for role, action in role_privilege_changes:
+            role_id = role["roleid"]
+            try:
+                post(
+                    f"roles({role_id})/Microsoft.Dynamics.CRM.AddPrivilegesRole",
+                    {
+                        "Privileges": [
+                            {
+                                "Depth": str(TARGET_DEPTH),
+                                "PrivilegeId": write_contact_priv_id,
+                            }
+                        ]
+                    },
+                )
+                print(f"  + {role['name']}: prvWriteContact set to BusinessUnit")
+            except RuntimeError as e:
+                print(f"  ! {role['name']}: {e}")
+                errors += 1
+            time.sleep(0.3)
     print()
 
 # 5b. Create Field Security Profile if needed
