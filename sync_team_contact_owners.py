@@ -217,39 +217,70 @@ print()
 # ── 3. Discover how Contacts relate to Teams ─────────────────────────────────
 print("Discovering Contact → Team relationship...")
 
-# Strategy A: look for a tyr_team / team lookup on the Contact entity
-contact_team_field = None
+# Confirm the actual logical name for the teams entity via metadata
 try:
-    attr_url = f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='contact')/Attributes"
-    params = {"$select": "LogicalName,AttributeType", "$top": 500}
-    all_attrs = []
-    url = attr_url
-    while url:
-        resp = get_abs(url, params)
-        all_attrs.extend(resp.get("value", []))
-        url = resp.get("@odata.nextLink")
-        params = None
+    tm_meta = get(
+        f"EntityDefinitions(LogicalName='{teams_logical}')",
+        {"$select": "LogicalName,PrimaryIdAttribute"},
+    )
+    teams_logical = tm_meta.get("LogicalName", teams_logical)
+    pk_from_meta = tm_meta.get("PrimaryIdAttribute")
+    if pk_from_meta:
+        pk_field = pk_from_meta
+except RuntimeError:
+    pass
 
-    # Look for a Lookup field whose name contains "team"
-    team_lookups = [
-        a for a in all_attrs
-        if a.get("AttributeType") == "Lookup"
-        and "team" in a.get("LogicalName", "").lower()
-    ]
-    if team_lookups:
-        contact_team_field = team_lookups[0]["LogicalName"]
-        print(f"  Found lookup on Contact: '{contact_team_field}'")
-except RuntimeError as e:
-    print(f"  Contact attribute scan failed: {e}")
+# Strategy A: query LookupAttributeMetadata on Contact — check Targets for teams_logical
+contact_team_field = None
+env_override = os.getenv("CONTACT_TEAM_FIELD", "").strip()
+if env_override:
+    contact_team_field = env_override
+    print(f"  Using CONTACT_TEAM_FIELD override: '{contact_team_field}'")
+else:
+    try:
+        lookup_url = (
+            f"{DYNAMICS_URL}/api/data/v9.2/"
+            f"EntityDefinitions(LogicalName='contact')/Attributes"
+            f"/Microsoft.Dynamics.CRM.LookupAttributeMetadata"
+        )
+        params = {"$select": "LogicalName,Targets", "$top": 500}
+        all_lookups = []
+        url = lookup_url
+        while url:
+            resp = get_abs(url, params)
+            all_lookups.extend(resp.get("value", []))
+            url = resp.get("@odata.nextLink")
+            params = None
 
-# Strategy B: look for a One-To-Many relationship from Teams → Contact
-team_contact_nav = None
+        # Find any lookup whose Targets include the custom teams entity
+        for a in all_lookups:
+            if teams_logical in (a.get("Targets") or []):
+                contact_team_field = a["LogicalName"]
+                print(f"  Found lookup on Contact: '{contact_team_field}' → {teams_logical}")
+                break
+
+        if not contact_team_field:
+            team_related = [
+                a["LogicalName"] for a in all_lookups
+                if "team" in a.get("LogicalName", "").lower()
+                and a.get("LogicalName") not in ("owningteam",)
+            ]
+            print(f"  No Contact lookup targets '{teams_logical}'.")
+            if team_related:
+                print(f"  Other team-related lookups on Contact: {team_related}")
+    except RuntimeError as e:
+        print(f"  LookupAttributeMetadata scan failed: {e}")
+
+# Strategy B: check One-To-Many relationships from the Teams entity → Contact
 if not contact_team_field:
-    print("  No team lookup on Contact — checking Teams entity relationships...")
+    print("  Checking Teams → Contact relationships via metadata...")
     try:
         rel_data = get(
             f"EntityDefinitions(LogicalName='{teams_logical}')/OneToManyRelationships",
-            {"$select": "SchemaName,ReferencingEntity,ReferencingAttribute,ReferencedEntityNavigationPropertyName"},
+            {
+                "$select": "SchemaName,ReferencingEntity,ReferencingAttribute,"
+                           "ReferencedEntityNavigationPropertyName",
+            },
         )
         contact_rels = [
             r for r in rel_data.get("value", [])
@@ -258,16 +289,22 @@ if not contact_team_field:
         if contact_rels:
             rel = contact_rels[0]
             contact_team_field = rel["ReferencingAttribute"]
-            team_contact_nav = rel["ReferencedEntityNavigationPropertyName"]
             print(f"  Found via relationship: Contact.{contact_team_field}")
+        else:
+            print(f"  No One-To-Many from {teams_logical} → contact found.")
+            all_referencing = sorted({r.get("ReferencingEntity") for r in rel_data.get("value", [])})
+            print(f"  Entities related to {teams_logical}: {all_referencing}")
     except RuntimeError as e:
         print(f"  Relationship scan failed: {e}")
 
 if not contact_team_field:
     print(
         "\nERROR: Could not find a relationship between Contact and the Teams entity.\n"
-        "Please set CONTACT_TEAM_FIELD env var to the lookup field name on Contact\n"
-        "that points to the Teams entity, then re-run."
+        "Set the CONTACT_TEAM_FIELD environment variable to the lookup field name on\n"
+        "Contact that points to the Teams entity, then re-run.\n"
+        "Example (PowerShell):\n"
+        "  $env:CONTACT_TEAM_FIELD='tyr_teamid'\n"
+        "  python sync_team_contact_owners.py --dry-run"
     )
     sys.exit(1)
 
@@ -382,85 +419,30 @@ else:
     print("All contact owners already match their team.\n")
 
 
-# ── 6. Create real-time workflow for ongoing sync ─────────────────────────────
-if SYNC_ONLY:
-    print("Done (--sync-only: skipping workflow creation).")
-    sys.exit(0 if not errors else 1)
+# ── 6. Workflow setup instructions ───────────────────────────────────────────
+if not SYNC_ONLY:
+    print("=" * 60)
+    print("SET UP AUTOMATIC SYNC (one-time CRM config)")
+    print("=" * 60)
+    print(f"""
+  To automatically sync contact owners whenever a Team's owner
+  changes, create a Classic Workflow in Dynamics 365:
 
-WORKFLOW_NAME = "Auto-sync Contact Owner from Team"
+  1. In CRM go to: Settings → Processes → New
+  2. Fill in:
+       Name     : Auto-sync Contact Owner from Team
+       Entity   : Teams  ({teams_logical})
+       Category : Workflow
+  3. Check: "As an on-demand process" = NO
+            "Record fields change" = YES → select Owner field
+  4. Add a step: "Update Records"
+       → Select: "{contact_team_field} (Contacts)"
+       → Set field: Owner = {{Teams(Owner)}}
+  5. Save and Activate the workflow.
 
-print(f"Checking for existing workflow '{WORKFLOW_NAME}'...")
-existing_wf = get(
-    "workflows",
-    {
-        "$select": "workflowid,name,statecode",
-        "$filter": f"name eq '{WORKFLOW_NAME}'",
-        "$top": 1,
-    },
-).get("value", [])
-
-if existing_wf:
-    wf = existing_wf[0]
-    state = "Active" if wf.get("statecode") == 1 else "Draft/Inactive"
-    print(f"  Workflow already exists ({state}) — skipping creation.")
-    print(f"  ID: {wf['workflowid']}")
-else:
-    print(f"  Not found — creating '{WORKFLOW_NAME}'...")
-
-    # Classic workflow XAML that triggers on Team ownerid change
-    # and reassigns all related contacts to the new owner.
-    xaml = f"""<Activity
-  x:Class="UpdateContactOwnersOnTeamOwnerChange"
-  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
-  xmlns:mxswa="clr-namespace:Microsoft.Xrm.Sdk.Workflow.Activities;assembly=Microsoft.Xrm.Sdk.Workflow"
-  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-  xmlns:crm="clr-namespace:Microsoft.Xrm.Sdk;assembly=Microsoft.Xrm.Sdk"
-  xmlns:crmt="clr-namespace:Microsoft.Xrm.Sdk.Query;assembly=Microsoft.Xrm.Sdk">
-  <mxswa:Workflow>
-    <mxswa:AssignEntity EntityId="{{mxswa:CrmParameter Name=InputEntities, ParameterName=primaryEntity}}"
-      EntityLogicalName="{teams_logical}"
-      AssignTo="{{ActivityAction}}" />
-  </mxswa:Workflow>
-</Activity>"""
-
-    try:
-        resp = post(
-            "workflows",
-            {
-                "name": WORKFLOW_NAME,
-                "description": (
-                    f"When a {teams_logical} record's owner changes, "
-                    "reassign all linked Contact records to the same owner."
-                ),
-                "category": 0,           # Classic Workflow
-                "primaryentity": teams_logical,
-                "scope": 4,              # Organization
-                "mode": 1,               # Real-time (synchronous)
-                "runas": 1,              # Calling user
-                "triggeroncreate": False,
-                "triggeronupdateattributelist": "ownerid",
-                "triggerondelete": False,
-                "statecode": 0,          # Draft — activate manually after review
-                "xaml": xaml,
-            },
-        )
-        location = resp.headers.get("OData-EntityId", "")
-        wf_id = location.rstrip(")").rsplit("(", 1)[-1]
-        print(f"  + Workflow created in Draft state: {wf_id}")
-        print()
-        print("  NEXT STEP: Open the workflow in CRM to review and activate it.")
-        print(f"  Navigate to: Settings → Processes → '{WORKFLOW_NAME}'")
-        print("  Add a 'Update Record' step: set Contact.Owner = {Team Owner}")
-        print("  Then activate the workflow.")
-    except RuntimeError as e:
-        print(f"  ! Workflow creation failed: {e}")
-        print()
-        print("  The owner sync above was still applied successfully.")
-        print("  To automate future syncs, create a workflow manually in CRM:")
-        print(f"    Trigger entity : {teams_logical}")
-        print(f"    Trigger fields : ownerid")
-        print(f"    Action         : Update related Contact (via {contact_team_field})")
-        print(f"                     Set Contact.ownerid = Team.ownerid")
+  Until then, re-run this script whenever team ownership changes:
+    python sync_team_contact_owners.py --sync-only
+""")
 
 print()
 print("Done.")
