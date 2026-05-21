@@ -55,7 +55,7 @@ def fetch_all(entity, select_fields, extra_filter=None):
     if extra_filter:
         params["$filter"] = extra_filter
     while url:
-        r = _session.get(url, headers=get_headers({"Prefer": "odata.maxpagesize=5000"}),
+        r = _session.get(url, headers=get_headers({"Prefer": "odata.maxpagesize=5000,odata.include-annotations=*"}),
                          params=params, timeout=60)
         if not r.ok:
             print(f"  ERROR fetching {entity}: {r.status_code} {r.text[:300]}")
@@ -72,7 +72,7 @@ def fetch_all(entity, select_fields, extra_filter=None):
 print("Step 1: Fetching teams with a servicing account...")
 teams = fetch_all(
     "tyr_teams",
-    ["tyr_teamid", "_ownerid_value", "_tyr_servicingaccount_value"],
+    ["tyr_teamid", "tyr_name", "_ownerid_value", "_tyr_servicingaccount_value"],
     "_tyr_servicingaccount_value ne null and statecode eq 0",
 )
 print(f"  Teams with servicing account: {len(teams)}")
@@ -83,8 +83,8 @@ for t in teams:
     acct_id   = t.get("_tyr_servicingaccount_value")
     team_id   = t.get("tyr_teamid")
     owner_id  = t.get("_ownerid_value")
-    owner_name = t.get("_ownerid_value@OData.Community.Display.V1.FormattedValue", owner_id)
-    team_name  = t.get("_tyr_servicingaccount_value@OData.Community.Display.V1.FormattedValue", team_id)
+    owner_name = t.get("_ownerid_value@OData.Community.Display.V1.FormattedValue") or owner_id
+    team_name  = t.get("tyr_name") or t.get("_tyr_servicingaccount_value@OData.Community.Display.V1.FormattedValue") or team_id
     if acct_id and team_id and owner_id:
         account_to_team[acct_id] = {
             "team_id": team_id,
