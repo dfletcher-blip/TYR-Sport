@@ -168,6 +168,52 @@ def find_duplicate_contacts() -> dict:
     }
 
 
+def create_contact(
+    first_name: str = "",
+    last_name: str = "",
+    email: str = "",
+    phone: str = "",
+    job_title: str = "",
+    notes: str = "",
+) -> dict:
+    """
+    Create a new contact in the CRM.
+    Duplicate contacts sharing the same email are permitted — no uniqueness check is performed.
+    """
+    import re
+
+    payload = {}
+    if first_name:
+        payload["firstname"] = first_name
+    if last_name:
+        payload["lastname"] = last_name
+    if email:
+        payload["emailaddress1"] = email
+    if phone:
+        payload["telephone1"] = phone
+    if job_title:
+        payload["jobtitle"] = job_title
+    if notes:
+        payload["description"] = notes
+
+    result = crm_post("contacts", payload)
+
+    record_url = result.get("record_url", "")
+    contact_id = ""
+    if record_url:
+        m = re.search(r'\(([^)]+)\)$', record_url)
+        if m:
+            contact_id = m.group(1)
+
+    full_name = f"{first_name} {last_name}".strip()
+    return {
+        "success": True,
+        "contact_id": contact_id,
+        "name": full_name,
+        "message": f"Contact '{full_name}' created successfully.",
+    }
+
+
 def update_contact(contact_id: str, updates: dict) -> dict:
     """
     Update a contact's information in the CRM.

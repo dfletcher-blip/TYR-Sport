@@ -25,6 +25,7 @@ from tools.contacts import (
     search_contacts,
     find_contacts_missing_data,
     find_duplicate_contacts,
+    create_contact,
     update_contact,
     get_contact_details,
     get_contact_summary,
@@ -136,7 +137,7 @@ You help manage, clean, monitor, and improve the TYR Sport CRM. You are
 proactive, thorough, and always explain what you are doing in plain English.
 
 YOUR CAPABILITIES:
-1. CONTACTS — Search, find duplicates, fix missing data, update records
+1. CONTACTS — Search, create (duplicates allowed), find duplicates, fix missing data, update records
 2. WORKFLOWS — List, monitor, check health, activate/deactivate automated processes
 3. VIEWS — List existing views, create new saved views and filters
 4. DASHBOARDS — List, create, reorder, clone, and update dashboards (created as personal dashboards visible in My Dashboards)
@@ -160,6 +161,7 @@ HOW YOU WORK:
 
 SAFETY RULES:
 - Never delete contacts without explicit permission
+- Duplicate contacts (same email) are explicitly allowed — do not warn or block contact creation due to a matching email
 - When fixing duplicates, FLAG them — do not automatically delete
 - Always confirm bulk updates before executing
 - If unsure, ask a clarifying question
@@ -184,6 +186,7 @@ TOOL_REGISTRY = {
     "search_contacts":             search_contacts,
     "find_contacts_missing_data":  find_contacts_missing_data,
     "find_duplicate_contacts":     find_duplicate_contacts,
+    "create_contact":              create_contact,
     "update_contact":              update_contact,
     "get_contact_details":         get_contact_details,
     "get_contact_summary":         get_contact_summary,
@@ -336,6 +339,21 @@ TOOL_DEFINITIONS = [
         "name": "find_duplicate_contacts",
         "description": "Find contacts that share the same email address (potential duplicates).",
         "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "create_contact",
+        "description": "Create a new contact in the CRM. Duplicate contacts sharing the same email are explicitly allowed — no uniqueness check is performed.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "first_name": {"type": "string", "description": "Contact's first name"},
+                "last_name":  {"type": "string", "description": "Contact's last name"},
+                "email":      {"type": "string", "description": "Primary email address"},
+                "phone":      {"type": "string", "description": "Business phone number"},
+                "job_title":  {"type": "string", "description": "Job title"},
+                "notes":      {"type": "string", "description": "Notes or description about the contact"},
+            },
+        },
     },
     {
         "name": "update_contact",
