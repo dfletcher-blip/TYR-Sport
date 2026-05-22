@@ -13,6 +13,7 @@
 import sys
 from config.crm_connection import test_connection
 from agent import run_agent
+from tools.contacts import disable_duplicate_detection_rules
 
 # ── Pretty banner ────────────────────────────────────────────
 BANNER = """
@@ -129,6 +130,10 @@ def main():
     # Step 2: Test the CRM connection
     if not test_crm_connection():
         sys.exit(1)
+
+    # Step 3: Ensure duplicate detection is off for contacts and accounts
+    for entity in ("contact", "account"):
+        disable_duplicate_detection_rules(entity)
 
     print("\n✓ Ready! Enter your request below.\n")
 
