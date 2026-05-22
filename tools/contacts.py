@@ -311,6 +311,75 @@ def get_contact_summary() -> dict:
     }
 
 
+def configure_contact_duplicate_rule() -> dict:
+    """
+    Replace existing contact duplicate detection rules with a single rule that
+    flags a duplicate only when BOTH email address AND account match.
+    Contacts sharing an email but linked to different accounts are allowed.
+    """
+    import re
+
+    # Disable all currently active contact duplicate rules
+    existing = crm_get("duplicaterules", {
+        "$select": "duplicateruleid,name",
+        "$filter": "baseentityname eq 'contact' and statecode eq 0",
+    }).get("value", [])
+
+    for rule in existing:
+        crm_patch("duplicaterules", rule["duplicateruleid"], {"statecode": 1, "statuscode": 2})
+
+    # Create the new rule
+    rule_result = crm_post("duplicaterules", {
+        "name": "Contact Duplicate - Same Email and Account",
+        "baseentityname": "contact",
+        "matchingentityname": "contact",
+        "operatorcode": 0,
+        "description": "Duplicate only when email address AND account both match.",
+    })
+
+    record_url = rule_result.get("record_url", "")
+    rule_id = ""
+    if record_url:
+        m = re.search(r'\(([^)]+)\)$', record_url)
+        if m:
+            rule_id = m.group(1)
+
+    if not rule_id:
+        return {"success": False, "message": "Rule created but could not determine its ID to add conditions."}
+
+    # Condition 1: same email address
+    crm_post("duplicateruleconditions", {
+        "baseattributename": "emailaddress1",
+        "matchingattributename": "emailaddress1",
+        "operatorcode": 0,
+        "ignoreblankvalues": True,
+        "DuplicateRuleId@odata.bind": f"/duplicaterules({rule_id})",
+    })
+
+    # Condition 2: same account (parentcustomerid lookup)
+    crm_post("duplicateruleconditions", {
+        "baseattributename": "parentcustomerid",
+        "matchingattributename": "parentcustomerid",
+        "operatorcode": 0,
+        "ignoreblankvalues": True,
+        "DuplicateRuleId@odata.bind": f"/duplicaterules({rule_id})",
+    })
+
+    # Publish/activate the rule
+    crm_action("PublishDuplicateRule", {"DuplicateRuleId": rule_id})
+
+    return {
+        "success": True,
+        "rule_id": rule_id,
+        "old_rules_disabled": [r["name"] for r in existing],
+        "message": (
+            f"Disabled {len(existing)} old rule(s) and created new rule "
+            f"'Contact Duplicate - Same Email and Account'. "
+            f"Contacts will only be flagged as duplicates when both email and account match."
+        ),
+    }
+
+
 def disable_duplicate_detection_rules(entity: str = "contact") -> dict:
     """
     Find and deactivate all active duplicate detection rules for an entity in Dynamics 365.

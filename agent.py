@@ -26,6 +26,7 @@ from tools.contacts import (
     find_contacts_missing_data,
     find_duplicate_contacts,
     create_contact,
+    configure_contact_duplicate_rule,
     update_contact,
     get_contact_details,
     get_contact_summary,
@@ -188,6 +189,7 @@ TOOL_REGISTRY = {
     "find_contacts_missing_data":  find_contacts_missing_data,
     "find_duplicate_contacts":     find_duplicate_contacts,
     "create_contact":              create_contact,
+    "configure_contact_duplicate_rule": configure_contact_duplicate_rule,
     "disable_duplicate_detection_rules": disable_duplicate_detection_rules,
     "update_contact":              update_contact,
     "get_contact_details":         get_contact_details,
@@ -356,6 +358,11 @@ TOOL_DEFINITIONS = [
                 "notes":      {"type": "string", "description": "Notes or description about the contact"},
             },
         },
+    },
+    {
+        "name": "configure_contact_duplicate_rule",
+        "description": "Replace existing contact duplicate detection rules with one that only flags a duplicate when BOTH email address AND account match. Contacts with the same email but different accounts are allowed.",
+        "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "disable_duplicate_detection_rules",
