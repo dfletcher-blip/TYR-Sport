@@ -309,3 +309,39 @@ def get_contact_summary() -> dict:
         },
         "overall_health": "Good" if len(no_email) / total < 0.1 else "Needs Attention" if total else "No Data",
     }
+
+
+def disable_duplicate_detection_rules(entity: str = "contact") -> dict:
+    """
+    Find and deactivate all active duplicate detection rules for an entity in Dynamics 365.
+    This removes the platform-level block so duplicate records can be created both
+    via the API and directly in the CRM UI (e.g. the Qualify Lead button).
+
+    entity: the CRM entity name to target (default "contact")
+    """
+    params = {
+        "$select": "duplicateruleid,name,baseentityname,statecode",
+        "$filter": f"baseentityname eq '{entity}' and statecode eq 0",
+    }
+    result = crm_get("duplicaterules", params)
+    rules = result.get("value", [])
+
+    if not rules:
+        return {
+            "success": True,
+            "message": f"No active duplicate detection rules found for '{entity}'. Nothing to disable.",
+            "rules_disabled": [],
+        }
+
+    disabled = []
+    for rule in rules:
+        rule_id = rule.get("duplicateruleid")
+        rule_name = rule.get("name", "Unknown rule")
+        crm_patch("duplicaterules", rule_id, {"statecode": 1, "statuscode": 2})
+        disabled.append({"id": rule_id, "name": rule_name})
+
+    return {
+        "success": True,
+        "message": f"Disabled {len(disabled)} duplicate detection rule(s) for '{entity}'. Duplicates can now be created in the UI and via API.",
+        "rules_disabled": disabled,
+    }

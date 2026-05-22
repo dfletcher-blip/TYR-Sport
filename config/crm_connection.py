@@ -110,6 +110,7 @@ def crm_post(endpoint: str, data: dict) -> dict:
         "OData-Version": "4.0",
         "Accept": "application/json",
         "Content-Type": "application/json",
+        "MSCRM.SuppressDuplicateDetection": "true",
     }
 
     response = requests.post(url, headers=headers, json=data)
@@ -176,6 +177,7 @@ def crm_action(action_name: str, data: dict = None) -> dict:
         "OData-Version": "4.0",
         "Accept": "application/json",
         "Content-Type": "application/json",
+        "MSCRM.SuppressDuplicateDetection": "true",
     }
 
     response = requests.post(url, headers=headers, json=data or {})

@@ -29,6 +29,7 @@ from tools.contacts import (
     update_contact,
     get_contact_details,
     get_contact_summary,
+    disable_duplicate_detection_rules,
 )
 from tools.workflows import (
     list_workflows,
@@ -187,6 +188,7 @@ TOOL_REGISTRY = {
     "find_contacts_missing_data":  find_contacts_missing_data,
     "find_duplicate_contacts":     find_duplicate_contacts,
     "create_contact":              create_contact,
+    "disable_duplicate_detection_rules": disable_duplicate_detection_rules,
     "update_contact":              update_contact,
     "get_contact_details":         get_contact_details,
     "get_contact_summary":         get_contact_summary,
@@ -352,6 +354,19 @@ TOOL_DEFINITIONS = [
                 "phone":      {"type": "string", "description": "Business phone number"},
                 "job_title":  {"type": "string", "description": "Job title"},
                 "notes":      {"type": "string", "description": "Notes or description about the contact"},
+            },
+        },
+    },
+    {
+        "name": "disable_duplicate_detection_rules",
+        "description": "Deactivate all active Dynamics 365 duplicate detection rules for an entity (default: contact). This removes the platform-level block that prevents duplicate records from being created in both the CRM UI and the API.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {
+                    "type": "string",
+                    "description": "CRM entity name to target (default 'contact')",
+                },
             },
         },
     },
