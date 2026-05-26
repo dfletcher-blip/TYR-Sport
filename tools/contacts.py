@@ -361,22 +361,21 @@ def configure_contact_duplicate_rule() -> dict:
     if not rule_id:
         return {"success": False, "message": "Could not create the duplicate rule."}
 
-    # Post conditions through the rule's own relationship URL.
-    # This links them to the rule implicitly — no @odata.bind needed in the body.
-    conditions_endpoint = f"duplicaterules({rule_id})/DuplicateRule_DuplicateRuleConditions"
-
-    crm_post(conditions_endpoint, {
+    # Post conditions — regardingobjectid links each condition to the rule
+    crm_post("duplicateruleconditions", {
         "baseattributename": "emailaddress1",
         "matchingattributename": "emailaddress1",
         "operatorcode": 0,
         "ignoreblankvalues": True,
+        "regardingobjectid@odata.bind": f"/duplicaterules({rule_id})",
     })
 
-    crm_post(conditions_endpoint, {
+    crm_post("duplicateruleconditions", {
         "baseattributename": "parentcustomerid",
         "matchingattributename": "parentcustomerid",
         "operatorcode": 0,
         "ignoreblankvalues": True,
+        "regardingobjectid@odata.bind": f"/duplicaterules({rule_id})",
     })
 
     # Publish the rule so it becomes active
