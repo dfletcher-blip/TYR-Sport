@@ -103,7 +103,7 @@ all_leads = []
 url = f"{DYNAMICS_URL}/api/data/v9.2/leads"
 params = {
     "$select": "leadid,fullname,stageid",
-    "$filter": f"_processid_value ne {new_bpf_id} and statecode eq 0",
+    "$filter": f"(_processid_value ne {new_bpf_id} or _processid_value eq null) and statecode eq 0",
     "$top": 1000,
 }
 while url:
