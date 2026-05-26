@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """
-Run this once to replace Dynamics 365 duplicate detection rules for contacts
-with a rule that only flags duplicates when BOTH email AND account match.
+Disables all duplicate detection rules for contacts in Dynamics 365.
 """
 
 import traceback
-from tools.contacts import configure_contact_duplicate_rule
+from tools.contacts import disable_duplicate_detection_rules
 
 try:
-    result = configure_contact_duplicate_rule()
+    result = disable_duplicate_detection_rules("contact")
     print(result["message"])
-    if not result.get("success"):
-        print("Warning: completed with issues.")
 except Exception:
     traceback.print_exc()
