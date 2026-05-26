@@ -319,32 +319,49 @@ def configure_contact_duplicate_rule() -> dict:
     """
     import re
 
-    # Disable all currently active contact duplicate rules
+    RULE_NAME = "Contact Duplicate - Same Email and Account"
+
+    # Disable all currently active contact duplicate rules (excluding the one we manage)
     existing = crm_get("duplicaterules", {
         "$select": "duplicateruleid,name",
         "$filter": "baseentityname eq 'contact' and statecode eq 0",
     }).get("value", [])
 
     for rule in existing:
-        crm_patch("duplicaterules", rule["duplicateruleid"], {"statecode": 1, "statuscode": 2})
+        if rule.get("name") != RULE_NAME:
+            crm_patch("duplicaterules", rule["duplicateruleid"], {"statecode": 1, "statuscode": 2})
 
-    # Create the new rule
-    rule_result = crm_post("duplicaterules", {
-        "name": "Contact Duplicate - Same Email and Account",
-        "baseentityname": "contact",
-        "matchingentityname": "contact",
-        "description": "Duplicate only when email address AND account both match.",
-    })
-
-    record_url = rule_result.get("record_url", "")
+    # Check if our rule already exists (may have been partially created in a prior attempt)
     rule_id = ""
-    if record_url:
-        m = re.search(r'\(([^)]+)\)$', record_url)
-        if m:
-            rule_id = m.group(1)
+    existing_managed = crm_get("duplicaterules", {
+        "$select": "duplicateruleid",
+        "$filter": f"name eq '{RULE_NAME}'",
+    }).get("value", [])
+
+    if existing_managed:
+        rule_id = existing_managed[0]["duplicateruleid"]
+        # Remove any conditions already on it so we can re-add cleanly
+        old_conditions = crm_get("duplicateruleconditions", {
+            "$select": "duplicateruleconditionid",
+            "$filter": f"_duplicateruleid_value eq {rule_id}",
+        }).get("value", [])
+        for cond in old_conditions:
+            crm_delete("duplicateruleconditions", cond["duplicateruleconditionid"])
+    else:
+        rule_result = crm_post("duplicaterules", {
+            "name": RULE_NAME,
+            "baseentityname": "contact",
+            "matchingentityname": "contact",
+            "description": "Duplicate only when email address AND account both match.",
+        })
+        record_url = rule_result.get("record_url", "")
+        if record_url:
+            m = re.search(r'\(([^)]+)\)$', record_url)
+            if m:
+                rule_id = m.group(1)
 
     if not rule_id:
-        return {"success": False, "message": "Rule created but could not determine its ID to add conditions."}
+        return {"success": False, "message": "Could not create or locate the duplicate rule."}
 
     # Condition 1: same email address
     crm_post("duplicateruleconditions", {
