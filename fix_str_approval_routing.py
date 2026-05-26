@@ -62,9 +62,9 @@ try:
     # 5. Create the missing approval record for ST-202605-11048
     approval_payload = {
         "tyr_SpecialTermsAgreement@odata.bind": f"/tyr_specialtermses({STR_ID})",
-        "ownerid@odata.bind":                  f"/systemusers({larry_id})",
-        "tyr_ActualApproverId@odata.bind":      f"/systemusers({larry_id})",
-        "tyr_Submitter@odata.bind":             f"/systemusers({maxime_id})",
+        "ownerid@odata.bind":                   f"/systemusers({larry_id})",
+        "tyr_actualapproverid@odata.bind":      f"/systemusers({larry_id})",
+        "tyr_submitter@odata.bind":             f"/systemusers({maxime_id})",
         "tyr_sentto":                           "Manager",
         "tyr_approvalstatus":                   935650000,  # In Progress
     }
