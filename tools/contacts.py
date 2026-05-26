@@ -352,7 +352,7 @@ def configure_contact_duplicate_rule() -> dict:
         "matchingattributename": "emailaddress1",
         "operatorcode": 0,
         "ignoreblankvalues": True,
-        "DuplicateRuleId@odata.bind": f"/duplicaterules({rule_id})",
+        "duplicateruleid@odata.bind": f"/duplicaterules({rule_id})",
     })
 
     # Condition 2: same account (parentcustomerid lookup)
@@ -361,7 +361,7 @@ def configure_contact_duplicate_rule() -> dict:
         "matchingattributename": "parentcustomerid",
         "operatorcode": 0,
         "ignoreblankvalues": True,
-        "DuplicateRuleId@odata.bind": f"/duplicaterules({rule_id})",
+        "duplicateruleid@odata.bind": f"/duplicaterules({rule_id})",
     })
 
     # Publish/activate the rule
