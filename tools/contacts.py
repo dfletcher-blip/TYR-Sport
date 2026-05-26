@@ -333,7 +333,6 @@ def configure_contact_duplicate_rule() -> dict:
         "name": "Contact Duplicate - Same Email and Account",
         "baseentityname": "contact",
         "matchingentityname": "contact",
-        "operatorcode": 0,
         "description": "Duplicate only when email address AND account both match.",
     })
 
