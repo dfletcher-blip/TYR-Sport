@@ -13,9 +13,9 @@ try:
     print("Entities with 'special', 'term', or 'str' in their name:")
     found = []
     for e in entities:
-        name = e.get("LogicalName", "").lower()
-        coll = e.get("LogicalCollectionName", "").lower()
-        label = ((e.get("DisplayName") or {}).get("UserLocalizedLabel") or {}).get("Label", "").lower()
+        name = (e.get("LogicalName") or "").lower()
+        coll = (e.get("LogicalCollectionName") or "").lower()
+        label = (((e.get("DisplayName") or {}).get("UserLocalizedLabel") or {}).get("Label") or "").lower()
         if any(k in name or k in coll or k in label for k in ["special", "term", "_str", "agreemen"]):
             found.append(e)
             print(f"  LogicalName: {e['LogicalName']}")
@@ -25,7 +25,7 @@ try:
     if not found:
         print("  None found — dumping all tyr_ entities instead:\n")
         for e in entities:
-            if e.get("LogicalName", "").startswith("tyr_"):
+            if (e.get("LogicalName") or "").startswith("tyr_"):
                 print(f"  {e['LogicalName']}  /  {e.get('LogicalCollectionName','?')}  /  {((e.get('DisplayName') or {}).get('UserLocalizedLabel') or {}).get('Label','?')}")
 except Exception as e:
     print(f"Error: {e}")
