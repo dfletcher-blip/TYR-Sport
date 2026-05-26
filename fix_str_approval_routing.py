@@ -54,19 +54,39 @@ try:
     print(f"\nSet {maxime['fullname']}'s manager to {larry['fullname']}.")
     print("Future STRs submitted by Maxime will now route correctly.")
 
-    # 4. Fetch the STR to get its type fields for the approval record
+    # 4. Look up the exact navigation property names for tyr_specialtermsapprovals
+    print("\nFetching entity metadata to find correct navigation property names...")
+    nav_props = {}
+    try:
+        rels = crm_get(
+            "EntityDefinitions(LogicalName='tyr_specialtermsapprovals')/ManyToOneRelationships",
+            {"$select": "SchemaName,ReferencingAttribute,ReferencingEntityNavigationPropertyName"},
+        ).get("value", [])
+        for rel in rels:
+            attr = (rel.get("ReferencingAttribute") or "").lower()
+            nav  = rel.get("ReferencingEntityNavigationPropertyName") or ""
+            nav_props[attr] = nav
+            print(f"  {attr} → {nav}")
+    except Exception as e:
+        print(f"  Metadata lookup failed: {e}")
+
+    def nav(attr_lower):
+        """Return the correct navigation property name for an attribute."""
+        return nav_props.get(attr_lower, attr_lower)
+
+    # 5. Fetch the STR to get its type fields for the approval record
     str_record = crm_get(f"tyr_specialtermses({STR_ID})", {
         "$select": "tyr_specialtermstype,tyr_tyrentity,tyr_typeofrequest,tyr_expirationdate,tyr_effectivedate,tyr_strtitle",
     })
 
-    # 5. Create the missing approval record for ST-202605-11048
+    # 6. Create the missing approval record for ST-202605-11048
     approval_payload = {
-        "tyr_SpecialTermsAgreement@odata.bind": f"/tyr_specialtermses({STR_ID})",
-        "ownerid@odata.bind":                   f"/systemusers({larry_id})",
-        "tyr_actualapproverid@odata.bind":      f"/systemusers({larry_id})",
-        "tyr_submitter@odata.bind":             f"/systemusers({maxime_id})",
-        "tyr_sentto":                           "Manager",
-        "tyr_approvalstatus":                   935650000,  # In Progress
+        f"{nav('tyr_specialtermsagreement')}@odata.bind": f"/tyr_specialtermses({STR_ID})",
+        "ownerid@odata.bind":                              f"/systemusers({larry_id})",
+        f"{nav('tyr_actualapproverid')}@odata.bind":       f"/systemusers({larry_id})",
+        f"{nav('tyr_submitter')}@odata.bind":              f"/systemusers({maxime_id})",
+        "tyr_sentto":       "Manager",
+        "tyr_approvalstatus": 935650000,  # In Progress
     }
 
     # Copy type fields from the STR if present
@@ -78,6 +98,10 @@ try:
         approval_payload["tyr_expirationdate"] = str_record["tyr_expirationdate"]
     if str_record.get("tyr_effectivedate"):
         approval_payload["tyr_effectivedate"] = str_record["tyr_effectivedate"]
+
+    print(f"\nPosting approval payload:")
+    for k, v in approval_payload.items():
+        print(f"  {k}: {v}")
 
     result = crm_post("tyr_specialtermsapprovalses", approval_payload)
     print(f"\nCreated approval record for {STR_NUMBER}.")
