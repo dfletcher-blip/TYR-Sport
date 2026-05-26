@@ -113,6 +113,7 @@ from tools.special_terms import (
     get_str_workflows,
     update_special_terms,
 )
+from tools.sync import sync_contact_owners
 from tools.form_customization import (
     get_entity_form,
     list_entity_fields,
@@ -150,6 +151,7 @@ YOUR CAPABILITIES:
 12. SPECIAL TERMS (STR) — Search STR records, check pending approvals, find expiring agreements, view by account, manage approval workflows
 13. FORM CUSTOMIZATION — Add fields to entity forms, create custom fields (including dropdowns), inspect form layouts, publish changes
 14. MEMORY — Read and update persistent CRM memory to remember field names, entity names, and CRM-specific facts across sessions
+15. SYNC — Sync contact owners to match their parent account's owner (bulk or preview)
 
 HOW YOU WORK:
 - Always start by READING data before making any changes
@@ -243,6 +245,9 @@ TOOL_REGISTRY = {
     "get_special_terms_summary":      get_special_terms_summary,
     "get_str_workflows":              get_str_workflows,
     "update_special_terms":           update_special_terms,
+
+    # Sync tools
+    "sync_contact_owners":         sync_contact_owners,
 
     # Form customization tools
     "get_entity_form":                get_entity_form,
@@ -1090,6 +1095,16 @@ TOOL_DEFINITIONS = [
                 "contact_id": {"type": "string", "description": "Contact GUID (provide this or lead_id)"},
                 "lead_id": {"type": "string", "description": "Lead GUID (provide this or contact_id)"},
                 "limit": {"type": "integer", "description": "Max emails to return (default 20)"},
+            },
+        },
+    },
+    {
+        "name": "sync_contact_owners",
+        "description": "Sync contact owners to match their parent account's owner. Finds all active contacts whose owner differs from their account's owner and updates them. Use dry_run=True to preview before applying.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "dry_run": {"type": "boolean", "description": "If true, preview changes without applying them (default false)"},
             },
         },
     },
