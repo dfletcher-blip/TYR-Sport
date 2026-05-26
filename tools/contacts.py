@@ -14,7 +14,7 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from config.crm_connection import crm_get, crm_patch, crm_post, crm_delete
+from config.crm_connection import crm_get, crm_patch, crm_post, crm_delete, crm_action
 
 
 def search_contacts(search_term: str = "", limit: int = 50) -> dict:
