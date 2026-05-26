@@ -95,13 +95,15 @@ for old_name, new_name in STAGE_MAP.items():
 default_new_stage = next((v for k, v in new_stages.items() if "new" in k.lower()), None)
 print(f"\n  Default stage for unmapped leads: New ({default_new_stage})\n")
 
-# --- Step 3: Get all leads on old BPF ---
-print("Step 3: Getting leads on old BPF...")
+# --- Step 3: Get all leads not yet on new BPF ---
+# Catches leads explicitly on the old BPF AND leads with no BPF assignment
+# (null _processid_value), which Dynamics displays using the default/old BPF.
+print("Step 3: Getting leads not yet on new BPF...")
 all_leads = []
 url = f"{DYNAMICS_URL}/api/data/v9.2/leads"
 params = {
     "$select": "leadid,fullname,stageid",
-    "$filter": f"_processid_value eq {old_bpf_id} and statecode eq 0",
+    "$filter": f"_processid_value ne {new_bpf_id} and statecode eq 0",
     "$top": 1000,
 }
 while url:
@@ -111,7 +113,7 @@ while url:
     url = data.get("@odata.nextLink")
     params = None
 
-print(f"  Found {len(all_leads)} leads to migrate\n")
+print(f"  Found {len(all_leads)} leads to migrate (old BPF + unassigned)\n")
 
 if not all_leads:
     print("No leads to migrate.")
