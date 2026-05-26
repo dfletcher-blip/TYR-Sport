@@ -378,8 +378,8 @@ def configure_contact_duplicate_rule() -> dict:
         "regardingobjectid@odata.bind": f"/duplicaterules({rule_id})",
     })
 
-    # Publish the rule so it becomes active
-    crm_action("PublishDuplicateRule", {"DuplicateRuleId": rule_id})
+    # Activate the rule
+    crm_patch("duplicaterules", rule_id, {"statecode": 0, "statuscode": 1})
 
     return {
         "success": True,
