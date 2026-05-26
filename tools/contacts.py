@@ -340,14 +340,15 @@ def configure_contact_duplicate_rule() -> dict:
 
     if existing_managed:
         rule_id = existing_managed[0]["duplicateruleid"]
-        # Remove any conditions already on it so we can re-add cleanly
-        old_conditions = crm_get("duplicateruleconditions", {
-            "$select": "duplicateruleconditionid",
-            "$filter": f"_duplicateruleid_value eq {rule_id}",
-        }).get("value", [])
-        for cond in old_conditions:
-            crm_delete("duplicateruleconditions", cond["duplicateruleconditionid"])
-    else:
+        # Deactivate then delete so we can recreate cleanly
+        try:
+            crm_patch("duplicaterules", rule_id, {"statecode": 1, "statuscode": 2})
+        except Exception:
+            pass
+        crm_delete("duplicaterules", rule_id)
+        rule_id = ""
+
+    if not rule_id:
         rule_result = crm_post("duplicaterules", {
             "name": RULE_NAME,
             "baseentityname": "contact",
