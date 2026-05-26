@@ -9,6 +9,16 @@ from config.crm_connection import crm_get, crm_action
 
 ROLE_NAME = "0 - TYR - Accounting"
 
+# Privileges needed to view/download attachments in this org.
+# Covers both entity attachments (msdyn_entityattachment) and
+# activity file attachments (activityfileattachment).
+TARGET_PRIVILEGES = [
+    "prvReadmsdyn_entityattachment",
+    "prvAppendTomsdyn_entityattachment",
+    "prvReadactivityfileattachment",
+    "prvAppendToactivityfileattachment",
+]
+
 try:
     # 1. Find the role
     roles = crm_get("roles", {
@@ -21,39 +31,30 @@ try:
         exit(1)
 
     role_id = roles[0]["roleid"]
-    print(f"Found role: {ROLE_NAME}  ({role_id})")
+    print(f"Found role: {ROLE_NAME}  ({role_id})\n")
 
-    # 2. Search broadly for annotation-related privileges to find exact names
-    all_privs = crm_get("privileges", {
-        "$select": "privilegeid,name",
-        "$filter": "contains(name,'nnotation')",
-    }).get("value", [])
-
-    if not all_privs:
-        all_privs = crm_get("privileges", {
+    # 2. Look up each privilege by exact name
+    privileges_to_grant = []
+    for priv_name in TARGET_PRIVILEGES:
+        result = crm_get("privileges", {
             "$select": "privilegeid,name",
-            "$filter": "contains(name,'ttach')",
+            "$filter": f"name eq '{priv_name}'",
         }).get("value", [])
 
-    print(f"\nAnnotation/attachment privileges found in this org:")
-    for p in all_privs:
-        print(f"  {p['name']}  ({p['privilegeid']})")
-
-    # 3. Grant Read and AppendTo on Annotation matched by partial name
-    target_keywords = ["readannotation", "appendtoannotation"]
-    privileges_to_grant = []
-    for priv in all_privs:
-        if any(kw in priv["name"].lower() for kw in target_keywords):
+        if result:
             privileges_to_grant.append({
                 "Depth": "Global",
-                "PrivilegeId": priv["privilegeid"],
+                "PrivilegeId": result[0]["privilegeid"],
             })
-            print(f"\nGranting: {priv['name']}")
+            print(f"  Found: {priv_name}")
+        else:
+            print(f"  Not found: {priv_name} — skipping")
 
     if not privileges_to_grant:
-        print("\nCould not match target privileges — see list above to identify correct names.")
+        print("\nNo privileges matched.")
         exit(1)
 
+    # 3. Grant them to the role
     crm_action(
         f"roles({role_id})/Microsoft.Dynamics.CRM.AddPrivilegesRole",
         {"Privileges": privileges_to_grant},
