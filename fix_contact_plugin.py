@@ -53,24 +53,28 @@ try:
         print(f"  ID:     {s['sdkmessageprocessingstepid']}")
         print()
 
-    # 4. Deactivate any step whose name or type suggests email/duplicate checking
-    keywords = ["duplicate", "unique", "email", "contact"]
+    # 4. Deactivate custom (non-Microsoft) steps that relate to duplicate/unique checks.
+    # Skip anything from Microsoft.Crm or Microsoft.Dynamics — those are system plugins
+    # and cannot be modified.
+    keywords = ["duplicate", "unique", "email", "prevent"]
     deactivated = []
     for s in steps:
-        typename = (s.get("plugintypeid") or {}).get("typename", "").lower()
-        name = s.get("name", "").lower()
-        if any(k in name or k in typename for k in keywords):
+        typename = (s.get("plugintypeid") or {}).get("typename", "")
+        name = s.get("name", "")
+        is_microsoft = typename.lower().startswith("microsoft.")
+        matches_keyword = any(k in name.lower() or k in typename.lower() for k in keywords)
+        if not is_microsoft and matches_keyword:
             crm_patch(
                 "sdkmessageprocessingsteps",
                 s["sdkmessageprocessingstepid"],
                 {"statecode": 1, "statuscode": 2},
             )
-            deactivated.append(s["name"])
-            print(f"Deactivated: {s['name']}")
+            deactivated.append(name)
+            print(f"Deactivated: {name}")
 
     if not deactivated:
-        print("No steps matched duplicate/email keywords — printing all steps above.")
-        print("Identify which one is blocking contact creation and share the name.")
+        print("No custom duplicate-related steps found to deactivate.")
+        print("Review the list above and share the plugin name blocking creation.")
 
 except Exception:
     traceback.print_exc()
