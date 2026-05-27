@@ -12,9 +12,9 @@ from config.crm_connection import get_access_token
 
 DYNAMICS_URL = os.getenv("DYNAMICS_URL", "").rstrip("/")
 DRY_RUN = "--dry-run" in sys.argv
-FIELD = "estimatedvalue"
+FIELD = "budgetamount"
 ENTITY = "opportunity"
-NEW_LABEL = "Amount"
+NEW_LABEL = "Budget Amount"
 
 _token: dict = {"value": None, "expires": 0}
 
