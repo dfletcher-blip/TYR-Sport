@@ -57,6 +57,25 @@
     ]
   },
 
+  "opportunity_bpf": {
+    "name": "Opportunity Sales Procedure",
+    "id": "16c9f727-09db-f011-8543-000d3a5a5d81",
+    "note": "There is also a '(Copy)' BPF (7ccb8970). Some opportunities may be on either. Filter by activestageid on the opportunitysalesprocess related entity in FetchXML.",
+    "stages": {
+      "Discovery":   "372bb159-2460-4ca3-b32b-f82956cdfe0a",
+      "Proposal":    "c8e504eb-3120-4867-a41b-58eacf9bb645",
+      "Negotiation": "e4555131-862b-4889-87a7-e7fba1f4e57c",
+      "Commitment":  "ba3b85d0-6049-411d-863c-66444adfd61d",
+      "Closed":      "bc9f2f84-e80a-4543-b0fe-09cd0b4bade7"
+    },
+    "copy_bpf_stages": {
+      "Discovery":   "66091d73-ce32-4e5c-9f8f-f8536daa6bf1",
+      "Proposal":    "c0ff0e41-b4da-4e56-916a-c96739b99e7f",
+      "Negotiation": "8ab72105-0c5b-4fa2-ab61-32a7349bd204",
+      "Commitment":  "e50f5e96-3fef-4d11-a8f6-9d51c0655efa",
+      "Closed":      "c463d292-4365-45a8-b556-e9706c92321c"
+    }
+  },
   "known_views": {
     "opportunity": [
       "Open Opportunities",
