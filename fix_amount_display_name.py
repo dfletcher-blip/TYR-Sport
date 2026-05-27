@@ -1,7 +1,7 @@
 """
-Fix: update the 'estimatedvalue' field's global display name on Opportunity
-     from whatever it currently is (e.g. "Est. Revenue") to "Amount",
-     so it matches the form label and shows correctly in view filters.
+Swap opportunity amount field display names:
+  budgetamount   → "Amount"      (this is the actual deal value on the form)
+  estimatedvalue → "Est. Revenue" (unused, restore to original)
 
 Run with --dry-run to preview without making changes.
 """
@@ -12,9 +12,11 @@ from config.crm_connection import get_access_token
 
 DYNAMICS_URL = os.getenv("DYNAMICS_URL", "").rstrip("/")
 DRY_RUN = "--dry-run" in sys.argv
-FIELD = "budgetamount"
-ENTITY = "opportunity"
-NEW_LABEL = "Budget Amount"
+
+RENAMES = [
+    ("budgetamount",   "Amount"),
+    ("estimatedvalue", "Est. Revenue"),
+]
 
 _token: dict = {"value": None, "expires": 0}
 
@@ -33,83 +35,70 @@ def get_headers(extra=None):
         h.update(extra)
     return h
 
-# Step 1: Fetch current metadata
-print(f"Fetching current metadata for '{FIELD}' on {ENTITY}...")
-r = requests.get(
-    f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='{ENTITY}')/Attributes(LogicalName='{FIELD}')",
-    headers=get_headers({"Prefer": "odata.include-annotations=*"}),
-    params={"$select": "LogicalName,DisplayName,AttributeType"},
-    timeout=30,
-)
-if not r.ok:
-    print(f"  ERROR: {r.status_code} {r.text[:300]}")
-    exit(1)
+def get_current_label(field):
+    r = requests.get(
+        f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='opportunity')/Attributes(LogicalName='{field}')",
+        headers=get_headers(),
+        params={"$select": "LogicalName,DisplayName,AttributeType"},
+        timeout=30,
+    )
+    if not r.ok:
+        raise RuntimeError(f"{r.status_code} {r.text[:200]}")
+    meta = r.json()
+    label = ((meta.get("DisplayName") or {}).get("UserLocalizedLabel") or {}).get("Label", "unknown")
+    odata_type = meta.get("@odata.type", "Microsoft.Dynamics.CRM.MoneyAttributeMetadata")
+    return label, odata_type
 
-meta = r.json()
-current_label = (
-    (meta.get("DisplayName") or {})
-    .get("UserLocalizedLabel", {})
-    .get("Label", "unknown")
-)
-attr_type = meta.get("AttributeType", "")
-odata_type = meta.get("@odata.type", "")
+def rename_field(field, new_label, odata_type):
+    payload = {
+        "@odata.type": odata_type,
+        "DisplayName": {
+            "LocalizedLabels": [{"Label": new_label, "LanguageCode": 1033}],
+            "UserLocalizedLabel": {"Label": new_label, "LanguageCode": 1033},
+        },
+    }
+    for attempt in range(1, 5):
+        try:
+            r = requests.put(
+                f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='opportunity')/Attributes(LogicalName='{field}')",
+                headers=get_headers({"If-Match": "*", "MSCRM.MergeLabels": "true"}),
+                json=payload,
+                timeout=120,
+            )
+            return r
+        except requests.exceptions.Timeout:
+            wait = 2 ** attempt
+            print(f"    Timeout on attempt {attempt}/4 — retrying in {wait}s...")
+            time.sleep(wait)
+    return None
 
-print(f"  Current display name : '{current_label}'")
-print(f"  Attribute type       : {attr_type}")
-print(f"  OData type           : {odata_type}\n")
+# --- Preview or apply ---
+for field, new_label in RENAMES:
+    current_label, odata_type = get_current_label(field)
+    if current_label == new_label:
+        print(f"  {field}: already '{new_label}' — skipping")
+        continue
+    if DRY_RUN:
+        print(f"  DRY RUN: {field} '{current_label}' → '{new_label}'")
+        continue
+    print(f"  Renaming {field}: '{current_label}' → '{new_label}'...")
+    r = rename_field(field, new_label, odata_type)
+    if r is None:
+        print(f"    ERROR: all attempts timed out.")
+    elif r.ok or r.status_code == 204:
+        print(f"    Done.")
+    else:
+        print(f"    ERROR: {r.status_code} {r.text[:200]}")
 
-if current_label == NEW_LABEL:
-    print(f"Display name is already '{NEW_LABEL}'. Nothing to do.")
-    exit(0)
-
-if DRY_RUN:
-    print(f"DRY RUN — would rename '{current_label}' → '{NEW_LABEL}' on {ENTITY}.{FIELD}")
-    exit(0)
-
-# Step 2: Patch display name
-print(f"Updating display name: '{current_label}' → '{NEW_LABEL}'...")
-payload = {
-    "@odata.type": odata_type or "Microsoft.Dynamics.CRM.MoneyAttributeMetadata",
-    "DisplayName": {
-        "LocalizedLabels": [{"Label": NEW_LABEL, "LanguageCode": 1033}],
-        "UserLocalizedLabel": {"Label": NEW_LABEL, "LanguageCode": 1033},
-    },
-}
-r2 = None
-for attempt in range(1, 5):
-    try:
-        r2 = requests.put(
-            f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='{ENTITY}')/Attributes(LogicalName='{FIELD}')",
-            headers=get_headers({"If-Match": "*", "MSCRM.MergeLabels": "true"}),
-            json=payload,
-            timeout=120,
-        )
-        break
-    except requests.exceptions.Timeout:
-        wait = 2 ** attempt
-        print(f"  Timeout on attempt {attempt}/4 — retrying in {wait}s...")
-        time.sleep(wait)
-
-if r2 is None:
-    print("  ERROR: all attempts timed out.")
-    exit(1)
-if not (r2.ok or r2.status_code == 204):
-    print(f"  ERROR: {r2.status_code} {r2.text[:300]}")
-    exit(1)
-print(f"  Field metadata updated.\n")
-
-# Step 3: Publish the entity so the change takes effect
-print("Publishing Opportunity entity...")
-r3 = requests.post(
-    f"{DYNAMICS_URL}/api/data/v9.2/PublishXml",
-    headers=get_headers(),
-    json={"ParameterXml": "<importexportxml><entities><entity>opportunity</entity></entities></importexportxml>"},
-    timeout=60,
-)
-if r3.ok or r3.status_code == 204:
-    print("  Published successfully.\n")
-else:
-    print(f"  Publish warning: {r3.status_code} {r3.text[:200]}\n")
-
-print(f"Done. '{FIELD}' on Opportunity now displays as '{NEW_LABEL}' in view filters and column headers.")
-print("Refresh your browser to see the change.")
+if not DRY_RUN:
+    print("\nPublishing Opportunity entity...")
+    r = requests.post(
+        f"{DYNAMICS_URL}/api/data/v9.2/PublishXml",
+        headers=get_headers(),
+        json={"ParameterXml": "<importexportxml><entities><entity>opportunity</entity></entities></importexportxml>"},
+        timeout=60,
+    )
+    if r.ok or r.status_code == 204:
+        print("  Published. Refresh your browser to see the changes.")
+    else:
+        print(f"  Publish warning: {r.status_code} {r.text[:200]}")
