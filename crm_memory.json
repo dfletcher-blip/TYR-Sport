@@ -93,6 +93,11 @@
     "PublishAllXml succeeds but does NOT make system dashboards visible in the app — do not mislead the user about this.",
     "The opportunity owner is retrieved via _ownerid_value field, not $expand ownerid.",
     "tyr_stage is the custom stage field for opportunities.",
-    "The user is on Anthropic Tier 1/2 — avoid making excessive tool calls in a single request to prevent 429 rate limit errors."
+    "The user is on Anthropic Tier 1/2 — avoid making excessive tool calls in a single request to prevent 429 rate limit errors.",
+    "INCIDENT — tyr_stage bulk corruption (May 2026): stageid on all opportunities was already set to Negotiation by a prior migration (migrate_opps_bpf.py set all records to first_stage from an unordered query). sync_opp_stage.py then copied that bad stageid into tyr_stage, setting all opportunities to Negotiation. Had to revert with revert_opp_stage.py. tyr_stage is currently null on all opportunities.",
+    "LESSON — Before any bulk field sync, always sample 10-20 records and verify the source field contains accurate, varied data. If all sampled records show the same value, STOP and investigate before writing anything.",
+    "LESSON — Never use an unordered API query to pick a 'first stage' for bulk migration. Always order by stagecategory or stagename and confirm the chosen stage with the user before patching records.",
+    "LESSON — The stageid field on opportunities is marked deprecated and was corrupted by a prior migration. Do not use stageid as a source of truth for stage data. tyr_stage must be populated manually by users or through a verified workflow.",
+    "LESSON — Always run --dry-run on any bulk update script and show the user a sample of what will change. Confirm before applying, especially when all sampled records show the same value."
   ]
 }
