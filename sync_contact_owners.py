@@ -98,21 +98,33 @@ for batch_num, start in enumerate(range(0, len(contacts_to_update), BATCH_SIZE),
             f"{payload}\r\n"
         )
     body = "".join(parts) + f"--{boundary}--\r\n"
-    resp = requests.post(
-        f"{DYNAMICS_URL}/api/data/v9.2/$batch",
-        headers={**get_headers(), "Content-Type": f"multipart/mixed; boundary={boundary}"},
-        data=body.encode("utf-8"),
-        timeout=120,
-    )
-    if resp.ok:
-        ok = resp.text.count("HTTP/1.1 204")
-        fail = len(batch) - ok
-        updated += ok
-        errors += fail
-        print(f"  Batch {batch_num}/{total_batches}: {ok} updated, {fail} errors")
-    else:
+    batch_ok = False
+    for attempt in range(1, 5):
+        try:
+            resp = requests.post(
+                f"{DYNAMICS_URL}/api/data/v9.2/$batch",
+                headers={**get_headers(), "Content-Type": f"multipart/mixed; boundary={boundary}"},
+                data=body.encode("utf-8"),
+                timeout=120,
+            )
+            if resp.ok:
+                ok = resp.text.count("HTTP/1.1 204")
+                fail = len(batch) - ok
+                updated += ok
+                errors += fail
+                print(f"  Batch {batch_num}/{total_batches}: {ok} updated, {fail} errors")
+            else:
+                errors += len(batch)
+                print(f"  Batch {batch_num}/{total_batches} FAILED: {resp.status_code} {resp.text[:150]}")
+            batch_ok = True
+            break
+        except Exception as e:
+            wait = 2 ** attempt
+            print(f"  Batch {batch_num}/{total_batches} connection error (attempt {attempt}/4): {e} — retrying in {wait}s")
+            time.sleep(wait)
+    if not batch_ok:
         errors += len(batch)
-        print(f"  Batch {batch_num}/{total_batches} FAILED: {resp.status_code} {resp.text[:150]}")
+        print(f"  Batch {batch_num}/{total_batches} gave up after 4 attempts")
     time.sleep(0.5)
 
 print(f"\nDone.")
