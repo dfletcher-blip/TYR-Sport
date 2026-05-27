@@ -84,9 +84,9 @@ else:
     if DRY_RUN:
         print("DRY RUN — first 10 opportunities that would be migrated:")
         for o in to_migrate[:10]:
-            old_stage = o.get("stageid", "")
+            old_stage = o.get("stageid") or ""
             new_stage = STAGE_MAP.get(old_stage, DEFAULT_STAGE)
-            print(f"  {o.get('name','')[:50]:52} stage {old_stage[:8]}... → {new_stage[:8]}...")
+            print(f"  {o.get('name','')[:50]:52} → stage {new_stage[:8]}...")
         if len(to_migrate) > 10:
             print(f"  ... and {len(to_migrate) - 10} more")
     else:
@@ -101,7 +101,7 @@ else:
             boundary = f"batch_{uuid.uuid4().hex}"
             parts = []
             for o in batch:
-                old_stage = o.get("stageid", "")
+                old_stage = o.get("stageid") or ""
                 new_stage = STAGE_MAP.get(old_stage, DEFAULT_STAGE)
                 payload = f'{{"processid":"{KEEP_BPF_ID}","stageid":"{new_stage}"}}'
                 oid = o["opportunityid"]
