@@ -86,7 +86,7 @@ else:
         for o in to_migrate[:10]:
             old_stage = o.get("stageid") or ""
             new_stage = STAGE_MAP.get(old_stage, DEFAULT_STAGE)
-            print(f"  {o.get('name','')[:50]:52} → stage {new_stage[:8]}...")
+            print(f"  {(o.get('name') or '')[:50]:52} → stage {new_stage[:8]}...")
         if len(to_migrate) > 10:
             print(f"  ... and {len(to_migrate) - 10} more")
     else:
