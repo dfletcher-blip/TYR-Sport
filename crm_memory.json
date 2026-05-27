@@ -11,10 +11,24 @@
   "key_fields": {
     "opportunity": {
       "stage": "tyr_stage",
+      "stage_values": {
+        "Discovery": 935650000,
+        "Proposal": 935650001,
+        "Negotiation": 935650002,
+        "Commitment": 935650003,
+        "Closed Won": 935650004,
+        "Closed Lost - Price": 935650005,
+        "Closed Lost - Timing": 100000000,
+        "Closed Lost - No Buying Authority": 100000001,
+        "Closed Lost - Competitor": 100000002,
+        "Code Issued": 302020001,
+        "Portal Opened": 302020002
+      },
       "products": "tyr_products",
       "next_step_date": "tyr_nextstepdate",
       "next_step": "stepname",
-      "amount": "estimatedvalue",
+      "amount": "budgetamount",
+      "amount_note": "budgetamount is the deal value field on the form (display name 'Amount'). estimatedvalue is unused (display name 'Est. Revenue').",
       "close_date": "estimatedclosedate",
       "owner": "_ownerid_value"
     },
