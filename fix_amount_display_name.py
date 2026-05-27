@@ -75,12 +75,24 @@ payload = {
         "UserLocalizedLabel": {"Label": NEW_LABEL, "LanguageCode": 1033},
     },
 }
-r2 = requests.put(
-    f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='{ENTITY}')/Attributes(LogicalName='{FIELD}')",
-    headers=get_headers({"If-Match": "*", "MSCRM.MergeLabels": "true"}),
-    json=payload,
-    timeout=30,
-)
+r2 = None
+for attempt in range(1, 5):
+    try:
+        r2 = requests.put(
+            f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='{ENTITY}')/Attributes(LogicalName='{FIELD}')",
+            headers=get_headers({"If-Match": "*", "MSCRM.MergeLabels": "true"}),
+            json=payload,
+            timeout=120,
+        )
+        break
+    except requests.exceptions.Timeout:
+        wait = 2 ** attempt
+        print(f"  Timeout on attempt {attempt}/4 — retrying in {wait}s...")
+        time.sleep(wait)
+
+if r2 is None:
+    print("  ERROR: all attempts timed out.")
+    exit(1)
 if not (r2.ok or r2.status_code == 204):
     print(f"  ERROR: {r2.status_code} {r2.text[:300]}")
     exit(1)
