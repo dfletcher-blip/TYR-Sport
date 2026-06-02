@@ -1076,80 +1076,13 @@ def create_run_specialty_dashboard() -> dict:
     )
     view5_id = _ensure_view("Run Specialty Accounts 2026", "account", acct_2026_fetch, account_layout)
 
-    # ── 2. Chart visualizations ────────────────────────────────────────────
-
-    # Chart 1: Leads by Owner
-    chart1_data = (
-        '<datadescription><reportdatasource name="Default"/>'
-        '<measurecollection>'
-        '<measure alias="count" field="leadid" aggregate="count"/>'
-        '</measurecollection>'
-        '<groupbycollection>'
-        '<groupby alias="owner" descending="false" field="ownerid"/>'
-        '</groupbycollection></datadescription>'
-    )
-    chart1_id = _ensure_chart(
-        "Run Specialty Leads by Owner", "lead", chart1_data, _bar_chart_xml()
-    )
-
-    # Chart 2: Leads by Status
-    chart2_data = (
-        '<datadescription><reportdatasource name="Default"/>'
-        '<measurecollection>'
-        '<measure alias="count" field="leadid" aggregate="count"/>'
-        '</measurecollection>'
-        '<groupbycollection>'
-        '<groupby alias="status" descending="false" field="statecode"/>'
-        '</groupbycollection></datadescription>'
-    )
-    chart2_id = _ensure_chart(
-        "Run Specialty Leads by Status", "lead", chart2_data, _pie_chart_xml()
-    )
-
-    # Chart 3: Accounts by Owner
-    chart3_data = (
-        '<datadescription><reportdatasource name="Default"/>'
-        '<measurecollection>'
-        '<measure alias="count" field="accountid" aggregate="count"/>'
-        '</measurecollection>'
-        '<groupbycollection>'
-        '<groupby alias="owner" descending="false" field="ownerid"/>'
-        '</groupbycollection></datadescription>'
-    )
-    chart3_id = _ensure_chart(
-        "Run Specialty Accounts by Owner", "account", chart3_data, _bar_chart_xml()
-    )
-
-    # Chart 4: Leads Created by Owner by Month (2026)
-    chart4_data = (
-        '<datadescription><reportdatasource name="Default"/>'
-        '<measurecollection>'
-        '<measure alias="count" field="leadid" aggregate="count"/>'
-        '</measurecollection>'
-        '<groupbycollection>'
-        '<groupby alias="month" descending="false" field="createdon" dategrouping="month"/>'
-        '<groupby alias="owner" descending="false" field="ownerid"/>'
-        '</groupbycollection></datadescription>'
-    )
-    chart4_id = _ensure_chart(
-        "Run Specialty Leads Created by Owner by Month", "lead",
-        chart4_data, _stacked_column_chart_xml()
-    )
-
-    # Chart 5: Accounts Created by Month (2026)
-    chart5_data = (
-        '<datadescription><reportdatasource name="Default"/>'
-        '<measurecollection>'
-        '<measure alias="count" field="accountid" aggregate="count"/>'
-        '</measurecollection>'
-        '<groupbycollection>'
-        '<groupby alias="month" descending="false" field="createdon" dategrouping="month"/>'
-        '</groupbycollection></datadescription>'
-    )
-    chart5_id = _ensure_chart(
-        "Run Specialty Accounts Created by Month", "account",
-        chart5_data, _column_chart_xml()
-    )
+    # ── 2. Look up existing system charts (API does not allow creating new ones) ─
+    # Use whatever chart exists for each entity as a fallback if named one not found.
+    chart1_id = _get_chart_id("lead",    "Leads by Owner")
+    chart2_id = _get_chart_id("lead",    "Leads by Status")
+    chart3_id = _get_chart_id("account", "Accounts by Owner")
+    chart4_id = _get_chart_id("lead",    "Leads by Source")   # best available monthly proxy
+    chart5_id = _get_chart_id("account", "Accounts by Industry")  # best available for accounts
 
     # ── 3. Build dashboard ─────────────────────────────────────────────────
 
@@ -1336,12 +1269,12 @@ def create_run_specialty_dashboard() -> dict:
             "Run Specialty Leads 2026",
             "Run Specialty Accounts 2026",
         ],
-        "charts_created": [
-            "Run Specialty Leads by Owner",
-            "Run Specialty Leads by Status",
-            "Run Specialty Accounts by Owner",
-            "Run Specialty Leads Created by Owner by Month",
-            "Run Specialty Accounts Created by Month",
+        "charts_used": [
+            "Leads by Owner (existing system chart)",
+            "Leads by Status (existing system chart)",
+            "Accounts by Owner (existing system chart)",
+            "Leads by Source (existing system chart)",
+            "Accounts by Industry (existing system chart)",
         ],
         "owner_email": user_email or "service account",
         "how_to_find": "In the CRM, go to Dashboards. Click the dropdown at the top that shows the current dashboard name, then select 'My Dashboards'. Run Specialty Dashboard will be listed there.",
