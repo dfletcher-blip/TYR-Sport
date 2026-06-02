@@ -1112,237 +1112,151 @@ def create_run_specialty_dashboard() -> dict:
             f'</parameters></control></cell>'
         )
 
+    # Build indexed component list, skipping any with missing view IDs
     components_def = [
-        ("lead",    view1_id, chart1_id, "Leads by Owner"),
-        ("lead",    view2_id, chart2_id, "Leads by Status"),
-        ("account", view3_id, chart3_id, "Accounts by Owner"),
-        ("lead",    view4_id, chart4_id, "Leads Created by Owner by Month (2026)"),
-        ("account", view5_id, chart5_id, "Accounts Created by Month (2026)"),
+        (0, "lead",    view1_id, chart1_id, "Leads by Owner"),
+        (1, "lead",    view2_id, chart2_id, "Leads by Status"),
+        (2, "account", view3_id, chart3_id, "Accounts by Owner"),
+        (3, "lead",    view4_id, chart4_id, "Leads Created by Owner by Month (2026)"),
+        (4, "account", view5_id, chart5_id, "Accounts Created by Month (2026)"),
     ]
 
-    left_cells = []
-    right_cells = []
-    for i, (entity, v_id, c_id, label) in enumerate(components_def):
-        if not v_id:
-            continue
-        cell = _dash_cell(i, entity, v_id, c_id, label)
-        if len(left_cells) <= len(right_cells):
-            left_cells.append(cell)
-        else:
-            right_cells.append(cell)
+    # Report which view/chart IDs were resolved (returned for debugging)
+    resolved = {
+        "view1_id": view1_id, "view2_id": view2_id, "view3_id": view3_id,
+        "view4_id": view4_id, "view5_id": view5_id,
+        "chart1_id": chart1_id, "chart2_id": chart2_id, "chart3_id": chart3_id,
+        "chart4_id": chart4_id, "chart5_id": chart5_id,
+    }
+    missing_views = [f"component_{ctrl_idx}" for ctrl_idx, _, v_id, _, _ in components_def if not v_id]
 
-    def _col_xml(cells, section_name, section_id):
-        rows = "".join(f"<row>{c}</row>" for c in cells)
+    # ── Build clean formxml as a string (avoids ElementTree mangling cloned XML) ─
+    # PATCH accepts our generated XML even though POST rejects it — proven behaviour.
+
+    def _make_formxml(comps):
+        """Build a complete, valid dashboard formxml from the given component tuples."""
+        left = [c for c in comps if c[0] < 3 and c[2]]   # ctrl_idx 0-2, view_id non-empty
+        right = [c for c in comps if c[0] >= 3 and c[2]]  # ctrl_idx 3-4, view_id non-empty
+
+        def _rows(comp_list):
+            out = ""
+            for ctrl_idx, entity, v_id, c_id, label in comp_list:
+                out += f"<row>{_dash_cell(ctrl_idx, entity, v_id, c_id, label)}</row>"
+            return out
+
+        def _col(comp_list, sec_name):
+            sec_id = "{" + str(uuid.uuid4()) + "}"
+            return (
+                f'<column width="50%"><sections>'
+                f'<section name="{sec_name}" showlabel="false" showbar="false"'
+                f' locklevel="0" id="{sec_id}" columns="1">'
+                f'<labels><label description="" languagecode="1033"/></labels>'
+                f'<rows>{_rows(comp_list)}</rows>'
+                f'</section></sections></column>'
+            )
+
+        tab_id = "{" + str(uuid.uuid4()) + "}"
         return (
-            f'<column width="50%"><sections>'
-            f'<section name="{section_name}" showlabel="false" showbar="false"'
-            f' locklevel="0" id="{{{section_id}}}" columns="1">'
-            f'<labels><label description="" languagecode="1033"/></labels>'
-            f'<rows>{rows}</rows>'
-            f'</section></sections></column>'
+            '<form>'
+            '<tabs>'
+            f'<tab name="tab" showlabel="false" locklevel="0" id="{tab_id}" expanded="true">'
+            '<labels><label description="Summary" languagecode="1033"/></labels>'
+            f'<columns>{_col(left, "section_left")}{_col(right, "section_right")}</columns>'
+            '</tab>'
+            '</tabs>'
+            '</form>'
         )
 
-    # form_xml is built later by modifying the cloned dashboard's own valid XML
+    new_formxml = _make_formxml(components_def)
 
-    # ── Cleanup: delete any previously agent-created personal dashboards with this name ─
-    deleted_old = []
-    user_email = os.getenv("DYNAMICS_USER_EMAIL", "")
-    owner_id = None
-    if user_email:
-        try:
-            owner_id = _get_user_id(user_email)
-        except Exception:
-            pass
+    # ── Find or create the system dashboard record ─────────────────────────────
+    # Prefer to PATCH the existing dashboard rather than delete+recreate, so
+    # app-module registration and navigation links stay intact.
+    existing_resp = crm_get("systemforms", {
+        "$filter": f"name eq '{DASHBOARD_NAME}' and type eq 0",
+        "$select": "formid,name",
+        "$top": 1,
+        "$orderby": "createdon desc",
+    })
+    existing_rows = existing_resp.get("value", [])
+    new_id = existing_rows[0]["formid"] if existing_rows else None
 
-    try:
-        token = get_access_token()
-        clean_headers = {
-            "Authorization": f"Bearer {token}",
-            "OData-MaxVersion": "4.0",
-            "OData-Version": "4.0",
-            "Accept": "application/json",
-        }
-        if owner_id:
-            clean_headers["MSCRMCallerID"] = owner_id
-        resp = _requests.get(
-            f"{DYNAMICS_URL}/api/data/v9.2/userforms",
-            headers=clean_headers,
-            params={"$filter": f"contains(name,'{DASHBOARD_NAME}') and type eq 0", "$select": "userformid,name"},
-        )
-        if resp.ok:
-            for old in resp.json().get("value", []):
-                old_id = old.get("userformid")
-                del_resp = _requests.delete(
-                    f"{DYNAMICS_URL}/api/data/v9.2/userforms({old_id})",
-                    headers=clean_headers,
-                )
-                if del_resp.ok:
-                    deleted_old.append(old.get("name"))
-    except Exception:
-        pass
+    deleted_old = []  # no longer deleting; kept for API response compatibility
 
-    # Also delete any system dashboards with this exact name created by the agent
-    try:
-        sys_resp = crm_get("systemforms", {
-            "$filter": f"name eq '{DASHBOARD_NAME}' and type eq 0",
-            "$select": "formid,name",
+    if not new_id:
+        # Dashboard doesn't exist yet — clone any system dashboard to get a valid record,
+        # then PATCH it with our formxml (POST rejects generated XML, PATCH accepts it).
+        source_resp = crm_get("systemforms", {
+            "$filter": "type eq 0",
+            "$select": "formid,name,formxml,objecttypecode",
+            "$top": 1,
         })
-        for old_sys in sys_resp.get("value", []):
-            old_id = old_sys.get("formid")
+        source_rows = source_resp.get("value", [])
+        if not source_rows:
+            return {"success": False, "error": "No existing system dashboard found to clone from."}
+
+        source = source_rows[0]
+        try:
+            clone_data = {
+                "name": DASHBOARD_NAME,
+                "description": (
+                    "Run Specialty performance dashboard: leads by owner, leads by status, "
+                    "accounts by owner, leads created by owner/month (2026), "
+                    "and accounts created by month (2026). All filtered to TYR Type = Run Specialty."
+                ),
+                "type": 0,
+                "formactivationstate": 1,
+                "formxml": source["formxml"],
+                "objecttypecode": source.get("objecttypecode", "none"),
+            }
+            post_result = crm_post("systemforms", clone_data)
+            record_url = post_result.get("record_url", "")
+            if "(" in record_url and ")" in record_url:
+                new_id = record_url.split("(")[-1].rstrip(")")
+        except Exception as e:
+            return {"success": False, "error": f"System dashboard scaffold failed: {str(e)}"}
+
+        # Fallback: query by name if URL parsing failed
+        if not new_id:
             try:
-                token2 = get_access_token()
-                _requests.delete(
-                    f"{DYNAMICS_URL}/api/data/v9.2/systemforms({old_id})",
-                    headers={
-                        "Authorization": f"Bearer {token2}",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                deleted_old.append(old_sys.get("name") + " (system)")
+                fallback = crm_get("systemforms", {
+                    "$filter": f"name eq '{DASHBOARD_NAME}' and type eq 0",
+                    "$select": "formid",
+                    "$top": 1,
+                    "$orderby": "createdon desc",
+                })
+                rows = fallback.get("value", [])
+                if rows:
+                    new_id = rows[0]["formid"]
             except Exception:
                 pass
-    except Exception:
-        pass
 
-    # ── Strategy: clone an existing system dashboard, then PATCH our formxml in ─
-    # POST to systemforms rejects our generated XML due to strict schema rules.
-    # But PATCH bypasses that validation (proven by reorder_dashboard_components).
-    # So: clone any existing system dashboard → gives us a valid systemform record
-    # → PATCH its name, description, and formxml with ours → publish.
+        if not new_id:
+            return {"success": False, "error": "Dashboard scaffold succeeded but could not retrieve its ID."}
 
-    # Step 1: find any existing system dashboard to clone from
-    source_resp = crm_get("systemforms", {
-        "$filter": "type eq 0",
-        "$select": "formid,name,formxml,objecttypecode",
-        "$top": 1,
-    })
-    source_rows = source_resp.get("value", [])
-    if not source_rows:
-        return {"success": False, "error": "No existing system dashboard found to use as a base."}
-
-    source = source_rows[0]
-    source_objecttypecode = source.get("objecttypecode", "none")
-
-    # Step 2: POST using the source's valid formxml (passes schema validation)
-    # crm_post returns {"record_url": "https://.../systemforms(GUID)"} — parse the GUID from that.
-    new_id = None
+    # ── PATCH with our clean formxml ───────────────────────────────────────────
     try:
-        clone_data = {
+        crm_patch("systemforms", new_id, {
+            "formxml": new_formxml,
             "name": DASHBOARD_NAME,
             "description": (
                 "Run Specialty performance dashboard: leads by owner, leads by status, "
                 "accounts by owner, leads created by owner/month (2026), "
                 "and accounts created by month (2026). All filtered to TYR Type = Run Specialty."
             ),
-            "type": 0,
             "formactivationstate": 1,
-            "formxml": source["formxml"],
-            "objecttypecode": source_objecttypecode,
-        }
-        post_result = crm_post("systemforms", clone_data)
-        # Extract GUID from OData-EntityId URL: ".../systemforms(GUID)"
-        record_url = post_result.get("record_url", "")
-        if "(" in record_url and ")" in record_url:
-            new_id = record_url.split("(")[-1].rstrip(")")
-    except Exception as e:
-        return {"success": False, "error": f"System dashboard scaffold failed: {str(e)}"}
-
-    # Fallback: query by name if URL parsing failed
-    if not new_id:
-        try:
-            new_db = crm_get("systemforms", {
-                "$filter": f"name eq '{DASHBOARD_NAME}' and type eq 0",
-                "$select": "formid",
-                "$top": 1,
-                "$orderby": "createdon desc",
-            })
-            rows = new_db.get("value", [])
-            if rows:
-                new_id = rows[0]["formid"]
-        except Exception:
-            pass
-
-    if not new_id:
-        return {"success": False, "error": "Dashboard was created but could not retrieve its ID to patch."}
-
-    # Step 4: Fetch the cloned dashboard's own valid formxml, modify it in place,
-    # then PATCH back — this guarantees the XML structure is always schema-valid
-    # because we start from XML that Dynamics 365 already accepted.
-    import xml.etree.ElementTree as ET
-
-    try:
-        cloned_resp = crm_get("systemforms", {
-            "$filter": f"formid eq {new_id}",
-            "$select": "formxml",
-            "$top": 1,
         })
-        base_xml = cloned_resp.get("value", [{}])[0].get("formxml", "")
-        if not base_xml:
-            raise RuntimeError("Empty formxml on cloned dashboard")
-        root = ET.fromstring(base_xml)
-    except Exception as e:
-        return {"success": False, "error": f"Could not read cloned dashboard XML: {str(e)}"}
-
-    # Update dashboard name in tab labels
-    tab_el = root.find(".//tab")
-    if tab_el is not None:
-        for lbl in tab_el.findall("labels/label"):
-            if lbl.get("languagecode") == "1033":
-                lbl.set("description", html.escape(DASHBOARD_NAME))
-
-    # Rebuild columns with our 5 components (3 left, 2 right)
-    tab_el = root.find(".//tab") or root
-    columns_el = tab_el.find("columns")
-    if columns_el is None:
-        columns_el = ET.SubElement(tab_el, "columns")
-
-    # Remove existing columns and build fresh ones
-    for old_col in list(columns_el.findall("column")):
-        columns_el.remove(old_col)
-
-    comp_groups = [components_def[:3], components_def[3:]]
-    for col_idx, comps in enumerate(comp_groups):
-        col_el = ET.SubElement(columns_el, "column")
-        col_el.set("width", "50%")
-        sections_el = ET.SubElement(col_el, "sections")
-        sec_el = ET.SubElement(sections_el, "section")
-        sec_el.set("name", f"section_{col_idx}")
-        sec_el.set("showlabel", "false")
-        sec_el.set("showbar", "false")
-        sec_el.set("locklevel", "0")
-        sec_el.set("id", "{" + str(uuid.uuid4()) + "}")
-        sec_el.set("columns", "1")
-        labels_el = ET.SubElement(sec_el, "labels")
-        lbl_el = ET.SubElement(labels_el, "label")
-        lbl_el.set("description", "")
-        lbl_el.set("languagecode", "1033")
-        rows_el = ET.SubElement(sec_el, "rows")
-        for i, (entity, v_id, c_id, label) in enumerate(comps):
-            ctrl_idx = col_idx * 3 + i
-            cell_xml = _dash_cell(ctrl_idx, entity, v_id, c_id, label)
-            try:
-                cell_el = ET.fromstring(cell_xml)
-                row_el = ET.SubElement(rows_el, "row")
-                row_el.append(cell_el)
-            except ET.ParseError:
-                pass
-
-    modified_formxml = ET.tostring(root, encoding="unicode")
-
-    try:
-        crm_patch("systemforms", new_id, {"formxml": modified_formxml, "name": DASHBOARD_NAME})
     except Exception as e:
         return {"success": False, "error": f"formxml patch failed: {str(e)}"}
 
-    # Step 5: PublishAllXml — more thorough than targeted PublishXml
+    # ── PublishAllXml ──────────────────────────────────────────────────────────
     publish_error = None
     try:
         crm_action("PublishAllXml", {})
     except Exception as e:
         publish_error = str(e)
 
-    # Step 6: add to every app module via AddAppComponents action
+    # ── Add to every app module ────────────────────────────────────────────────
     app_modules_added = []
     try:
         apps = crm_get("appmodules", {"$select": "appmoduleid,uniquename,name", "$top": 20})
@@ -1356,7 +1270,6 @@ def create_run_specialty_dashboard() -> dict:
                 })
                 app_modules_added.append(app_name)
             except Exception:
-                # Fallback: direct appmodulecomponent record
                 try:
                     crm_post("appmodulecomponents", {
                         "componentid": new_id,
@@ -1369,7 +1282,7 @@ def create_run_specialty_dashboard() -> dict:
     except Exception:
         pass
 
-    # Step 7: verify the dashboard exists and is active
+    # ── Verify ─────────────────────────────────────────────────────────────────
     verified_name = None
     verified_state = None
     try:
@@ -1384,7 +1297,7 @@ def create_run_specialty_dashboard() -> dict:
     except Exception:
         pass
 
-    components_built = len(left_cells) + len(right_cells)
+    components_built = sum(1 for _, _, v_id, _, _ in components_def if v_id)
     return {
         "success": True,
         "dashboard_name": DASHBOARD_NAME,
@@ -1393,13 +1306,17 @@ def create_run_specialty_dashboard() -> dict:
         "verified_state": verified_state,
         "environment": DYNAMICS_URL,
         "components_built": components_built,
+        "missing_views": missing_views,
+        "resolved_ids": resolved,
         "app_modules_added": app_modules_added,
         "publish_error": publish_error,
         "deleted_previous": deleted_old,
         "message": (
-            f"'{DASHBOARD_NAME}' created (ID: {new_id}) in {DYNAMICS_URL}. "
-            f"State: {verified_state}. Added to app modules: {app_modules_added or 'none'}. "
-            "Go to Dashboards in the CRM and look for it in the list."
+            f"'{DASHBOARD_NAME}' updated (ID: {new_id}) in {DYNAMICS_URL}. "
+            f"{components_built}/5 components built. "
+            f"State: {verified_state}. "
+            + (f"Missing views: {missing_views}. " if missing_views else "")
+            + "Go to Dashboards in the CRM and refresh."
         ),
     }
 
