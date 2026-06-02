@@ -985,7 +985,7 @@ def create_run_specialty_dashboard() -> dict:
 
     # Base lead layout (columns shown in the grid)
     lead_layout = (
-        '<grid name="resultset" jump="fullname" select="1" icon="1" preview="1">'
+        '<grid name="resultset" object="4" jump="fullname" select="1" icon="1" preview="1">'
         '<row name="result" id="leadid">'
         '<cell name="fullname" width="200"/>'
         '<cell name="companyname" width="150"/>'
@@ -996,7 +996,7 @@ def create_run_specialty_dashboard() -> dict:
     )
 
     account_layout = (
-        '<grid name="resultset" jump="name" select="1" icon="1" preview="1">'
+        '<grid name="resultset" object="1" jump="name" select="1" icon="1" preview="1">'
         '<row name="result" id="accountid">'
         '<cell name="name" width="200"/>'
         '<cell name="telephone1" width="120"/>'
