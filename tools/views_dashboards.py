@@ -1142,20 +1142,7 @@ def create_run_specialty_dashboard() -> dict:
             f'</section></sections></column>'
         )
 
-    tab_id       = str(uuid.uuid4())
-    left_sec_id  = str(uuid.uuid4())
-    right_sec_id = str(uuid.uuid4())
-    safe_name    = html.escape(DASHBOARD_NAME)
-
-    form_xml = (
-        f'<form object="none"><tabs>'
-        f'<tab name="tab_0" id="{{{tab_id}}}" locklevel="0" showlabel="false" expanded="true">'
-        f'<labels><label description="{safe_name}" languagecode="1033"/></labels>'
-        f'<columns>'
-        f'{_col_xml(left_cells, "section_0", left_sec_id)}'
-        f'{_col_xml(right_cells, "section_1", right_sec_id)}'
-        f'</columns></tab></tabs></form>'
-    )
+    # form_xml is built later by modifying the cloned dashboard's own valid XML
 
     # ── Cleanup: delete any previously agent-created personal dashboards with this name ─
     deleted_old = []
@@ -1279,9 +1266,72 @@ def create_run_specialty_dashboard() -> dict:
     if not new_id:
         return {"success": False, "error": "Dashboard was created but could not retrieve its ID to patch."}
 
-    # Step 4: PATCH our real formxml in (PATCH skips strict POST schema validation)
+    # Step 4: Fetch the cloned dashboard's own valid formxml, modify it in place,
+    # then PATCH back — this guarantees the XML structure is always schema-valid
+    # because we start from XML that Dynamics 365 already accepted.
+    import xml.etree.ElementTree as ET
+
     try:
-        crm_patch("systemforms", new_id, {"formxml": form_xml})
+        cloned_resp = crm_get("systemforms", {
+            "$filter": f"formid eq {new_id}",
+            "$select": "formxml",
+            "$top": 1,
+        })
+        base_xml = cloned_resp.get("value", [{}])[0].get("formxml", "")
+        if not base_xml:
+            raise RuntimeError("Empty formxml on cloned dashboard")
+        root = ET.fromstring(base_xml)
+    except Exception as e:
+        return {"success": False, "error": f"Could not read cloned dashboard XML: {str(e)}"}
+
+    # Update dashboard name in tab labels
+    tab_el = root.find(".//tab")
+    if tab_el is not None:
+        for lbl in tab_el.findall("labels/label"):
+            if lbl.get("languagecode") == "1033":
+                lbl.set("description", html.escape(DASHBOARD_NAME))
+
+    # Rebuild columns with our 5 components (3 left, 2 right)
+    tab_el = root.find(".//tab") or root
+    columns_el = tab_el.find("columns")
+    if columns_el is None:
+        columns_el = ET.SubElement(tab_el, "columns")
+
+    # Remove existing columns and build fresh ones
+    for old_col in list(columns_el.findall("column")):
+        columns_el.remove(old_col)
+
+    comp_groups = [components_def[:3], components_def[3:]]
+    for col_idx, comps in enumerate(comp_groups):
+        col_el = ET.SubElement(columns_el, "column")
+        col_el.set("width", "50%")
+        sections_el = ET.SubElement(col_el, "sections")
+        sec_el = ET.SubElement(sections_el, "section")
+        sec_el.set("name", f"section_{col_idx}")
+        sec_el.set("showlabel", "false")
+        sec_el.set("showbar", "false")
+        sec_el.set("locklevel", "0")
+        sec_el.set("id", "{" + str(uuid.uuid4()) + "}")
+        sec_el.set("columns", "1")
+        labels_el = ET.SubElement(sec_el, "labels")
+        lbl_el = ET.SubElement(labels_el, "label")
+        lbl_el.set("description", "")
+        lbl_el.set("languagecode", "1033")
+        rows_el = ET.SubElement(sec_el, "rows")
+        for i, (entity, v_id, c_id, label) in enumerate(comps):
+            ctrl_idx = col_idx * 3 + i
+            cell_xml = _dash_cell(ctrl_idx, entity, v_id, c_id, label)
+            try:
+                cell_el = ET.fromstring(cell_xml)
+                row_el = ET.SubElement(rows_el, "row")
+                row_el.append(cell_el)
+            except ET.ParseError:
+                pass
+
+    modified_formxml = ET.tostring(root, encoding="unicode")
+
+    try:
+        crm_patch("systemforms", new_id, {"formxml": modified_formxml, "name": DASHBOARD_NAME})
     except Exception as e:
         return {"success": False, "error": f"formxml patch failed: {str(e)}"}
 
