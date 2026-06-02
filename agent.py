@@ -140,7 +140,7 @@ YOUR CAPABILITIES:
 1. CONTACTS — Search, find duplicates, fix missing data, update records
 2. WORKFLOWS — List, monitor, check health, activate/deactivate automated processes
 3. VIEWS — List existing views, create new saved views and filters
-4. DASHBOARDS — List, create, reorder, clone, and update dashboards (created as personal dashboards visible in My Dashboards). Use create_run_specialty_dashboard to build the full Run Specialty Dashboard (5 charts: leads by owner, leads by status, accounts by owner, leads created by owner/month 2026, accounts created by month 2026) — always use this dedicated tool when asked for a Run Specialty Dashboard instead of building it manually.
+4. DASHBOARDS — List, create, reorder, clone, and update dashboards (created as personal dashboards visible in My Dashboards). IMPORTANT: When asked to create the Run Specialty Dashboard, you MUST call create_run_specialty_dashboard immediately — do not call list_dashboards, do not clone, do not use create_dashboard. Just call create_run_specialty_dashboard directly.
 5. OPPORTUNITIES — Search deals, view pipeline, track stalled opportunities, update stages
 6. ACCOUNTS — Search companies, view account details with contacts and deals, update records
 7. LEADS — Search leads, qualify leads, find stale leads, update records, bulk import from CSV
@@ -510,7 +510,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "create_dashboard",
-        "description": "Create a new dashboard in the CRM.",
+        "description": "Create a generic new dashboard in the CRM. DO NOT use this for the Run Specialty Dashboard — use create_run_specialty_dashboard instead.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -955,12 +955,15 @@ TOOL_DEFINITIONS = [
     {
         "name": "create_run_specialty_dashboard",
         "description": (
-            "Build the Run Specialty Dashboard in one shot. "
-            "Creates 5 charts all filtered to TYR Type = Run Specialty: "
+            "ALWAYS use this tool when asked to 'create the Run Specialty Dashboard' "
+            "or any variation of that request. "
+            "Do NOT use create_dashboard for this — this dedicated tool builds everything correctly. "
+            "Builds the Run Specialty Dashboard in one shot with 5 pre-filtered charts "
+            "(TYR Type = Run Specialty): "
             "(1) Leads by Owner, (2) Leads by Status, (3) Accounts by Owner, "
             "(4) Leads Created by Owner by Month for 2026, "
             "(5) Accounts Created by Month for 2026. "
-            "Also creates the required saved views and chart visualizations automatically."
+            "Creates all required saved views and chart visualizations automatically."
         ),
         "input_schema": {"type": "object", "properties": {}},
     },
