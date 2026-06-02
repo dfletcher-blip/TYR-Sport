@@ -1148,7 +1148,7 @@ def create_run_specialty_dashboard() -> dict:
     safe_name    = html.escape(DASHBOARD_NAME)
 
     form_xml = (
-        f'<form><tabs>'
+        f'<form object="none"><tabs>'
         f'<tab name="tab_0" id="{{{tab_id}}}" locklevel="0" showlabel="false" expanded="true">'
         f'<labels><label description="{safe_name}" languagecode="1033"/></labels>'
         f'<columns>'
@@ -1218,7 +1218,7 @@ def create_run_specialty_dashboard() -> dict:
     except Exception:
         pass
 
-    # ── Create as personal dashboard (userform) with impersonation ──────────
+    # ── Create as system dashboard — visible to all users in production ──────
     dashboard_data = {
         "name": DASHBOARD_NAME,
         "description": (
@@ -1227,34 +1227,34 @@ def create_run_specialty_dashboard() -> dict:
             "and accounts created by month (2026). All filtered to TYR Type = Run Specialty."
         ),
         "type": 0,
+        "formactivationstate": 1,
         "formxml": form_xml,
         "objecttypecode": "none",
     }
 
     try:
-        token = get_access_token()
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "OData-MaxVersion": "4.0",
-            "OData-Version": "4.0",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-        if owner_id:
-            headers["MSCRMCallerID"] = owner_id
-
-        response = _requests.post(
-            f"{DYNAMICS_URL}/api/data/v9.2/userforms",
-            headers=headers,
-            json=dashboard_data,
-        )
-        if not response.ok:
-            return {
-                "success": False,
-                "error": f"Dashboard creation failed ({response.status_code}): {response.text[:400]}",
-            }
+        result = crm_post("systemforms", dashboard_data)
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": f"Dashboard creation failed: {str(e)}"}
+
+    # Publish so it's immediately visible
+    try:
+        new_db = crm_get("systemforms", {
+            "$filter": f"name eq '{DASHBOARD_NAME}' and type eq 0",
+            "$select": "formid",
+            "$top": 1,
+            "$orderby": "createdon desc",
+        })
+        new_rows = new_db.get("value", [])
+        if new_rows:
+            new_id = new_rows[0]["formid"]
+            crm_action("PublishXml", {"ParameterXml": (
+                f"<importexportxml><dashboards>"
+                f"<dashboard>{new_id}</dashboard>"
+                f"</dashboards></importexportxml>"
+            )})
+    except Exception:
+        pass
 
     components_built = len(left_cells) + len(right_cells)
     return {
@@ -1275,11 +1275,9 @@ def create_run_specialty_dashboard() -> dict:
             "Leads by Source (existing system chart)",
             "Accounts by Industry (existing system chart)",
         ],
-        "owner_email": user_email or "service account",
-        "how_to_find": "In the CRM, go to Dashboards. Click the dropdown at the top that shows the current dashboard name, then select 'My Dashboards'. Run Specialty Dashboard will be listed there.",
         "message": (
-            f"'{DASHBOARD_NAME}' created with {components_built} charts for {user_email or 'the configured user'}. "
-            "To view: open Dashboards in the CRM, click the dashboard name dropdown, choose My Dashboards."
+            f"'{DASHBOARD_NAME}' created as a public system dashboard with {components_built} charts "
+            "and published. Visible to all users — go to Dashboards in the CRM and select it from the list."
         ),
     }
 
