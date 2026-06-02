@@ -849,6 +849,453 @@ def clone_dashboard(source_name_or_id: str, new_name: str, new_description: str 
     }
 
 
+def create_run_specialty_dashboard() -> dict:
+    """
+    Build the Run Specialty Dashboard with 5 charts, all filtered to
+    TYR Type = Run Specialty (option value 935650018):
+
+      1. Leads by Owner
+      2. Leads by Status
+      3. Accounts by Owner
+      4. Leads Created by Owner by Month – 2026
+      5. Accounts Created by Month – 2026
+
+    Creates the required saved views, chart visualizations, and the dashboard
+    in a single call. Safe to re-run — existing items with the same name will
+    be reused rather than duplicated.
+    """
+    RUN_SPECIALTY_VALUE = 935650018
+    DASHBOARD_NAME = "Run Specialty Dashboard"
+
+    # ── shared chart presentation XML helpers ─────────────────────────────
+
+    def _bar_chart_xml():
+        return (
+            '<Chart Palette="BrightPastel">'
+            '<Series>'
+            '<Series _Template_="All" ShadowOffset="0" BorderColor="64, 64, 64"'
+            ' BorderDashStyle="Solid" BorderWidth="1" IsValueShownAsLabel="true"'
+            ' Font="{0}, 9.5px" LabelForeColor="59, 59, 59" ChartType="Bar">'
+            '<SmartLabelStyle Enabled="True"/><Points/></Series></Series>'
+            '<ChartAreas><ChartArea _Template_="All" BorderColor="White" BorderDashStyle="Solid">'
+            '<AxisY LabelAutoFitMaxFontSize="8" TitleForeColor="59, 59, 59"'
+            ' TitleFont="{0}, 10.5px, style=Bold" LineColor="165, 172, 181">'
+            '<MajorGrid LineColor="239, 242, 246"/>'
+            '<MajorTickMark LineColor="165, 172, 181"/>'
+            '<LabelStyle Font="{0}, 9.5px" ForeColor="59, 59, 59"/></AxisY>'
+            '<AxisX LabelAutoFitMaxFontSize="8" TitleForeColor="59, 59, 59"'
+            ' TitleFont="{0}, 10.5px, style=Bold" LineColor="165, 172, 181">'
+            '<MajorGrid LineColor="Transparent"/>'
+            '<MajorTickMark LineColor="Transparent"/>'
+            '<LabelStyle Font="{0}, 9.5px" ForeColor="59, 59, 59"/></AxisX>'
+            '</ChartArea></ChartAreas>'
+            '<Legends><Legend _Template_="All" Alignment="Center" LegendStyle="Table"'
+            ' Docking="Bottom" IsEquallySpacedItems="True" BackColor="White"'
+            ' BorderColor="228, 228, 228" BorderWidth="1" Font="{0}, 11px"'
+            ' ShadowColor="0, 0, 0, 0" ForeColor="59, 59, 59"/></Legends>'
+            '<Titles><Title _Template_="All" DockingOffset="-3" Font="{0}, 11px, style=Bold"'
+            ' ForeColor="59, 59, 59" ShadowColor="0, 0, 0, 0"/></Titles></Chart>'
+        )
+
+    def _column_chart_xml():
+        return _bar_chart_xml().replace('ChartType="Bar"', 'ChartType="Column"')
+
+    def _stacked_column_chart_xml():
+        return _bar_chart_xml().replace('ChartType="Bar"', 'ChartType="StackedColumn"')
+
+    def _pie_chart_xml():
+        return (
+            '<Chart Palette="BrightPastel">'
+            '<Series>'
+            '<Series _Template_="All" ShadowOffset="0" BorderColor="64, 64, 64"'
+            ' BorderDashStyle="Solid" BorderWidth="1" IsValueShownAsLabel="true"'
+            ' Font="{0}, 9.5px" LabelForeColor="59, 59, 59"'
+            ' CustomProperties="PieLabelStyle=Outside, PieLineColor=Black, PieDrawingStyle=Default"'
+            ' ChartType="Pie">'
+            '<SmartLabelStyle Enabled="True"/><Points/></Series></Series>'
+            '<ChartAreas><ChartArea _Template_="All" BorderColor="White" BorderDashStyle="Solid">'
+            '</ChartArea></ChartAreas>'
+            '<Legends><Legend _Template_="All" Alignment="Center" LegendStyle="Table"'
+            ' Docking="Bottom" IsEquallySpacedItems="True" BackColor="White"'
+            ' BorderColor="228, 228, 228" BorderWidth="1" Font="{0}, 11px"'
+            ' ShadowColor="0, 0, 0, 0" ForeColor="59, 59, 59"/></Legends>'
+            '<Titles><Title _Template_="All" DockingOffset="-3" Font="{0}, 11px, style=Bold"'
+            ' ForeColor="59, 59, 59" ShadowColor="0, 0, 0, 0"/></Titles></Chart>'
+        )
+
+    # ── helper: create or retrieve a saved view ────────────────────────────
+
+    def _ensure_view(name: str, entity: str, fetchxml: str, layoutxml: str) -> str:
+        """Return an existing view's savedqueryid or create it and return the new id."""
+        result = crm_get("savedqueries", {
+            "$filter": f"returnedtypecode eq '{entity}' and name eq '{name.replace(chr(39), chr(39)+chr(39))}' and querytype eq 0",
+            "$select": "savedqueryid",
+            "$top": 1,
+        })
+        rows = result.get("value", [])
+        if rows:
+            return rows[0]["savedqueryid"]
+        data = {
+            "name": name,
+            "returnedtypecode": entity,
+            "querytype": 0,
+            "fetchxml": fetchxml,
+            "layoutxml": layoutxml,
+            "isdefault": False,
+        }
+        created = crm_post("savedqueries", data)
+        # crm_post returns the created record or raises; re-fetch to get id
+        result2 = crm_get("savedqueries", {
+            "$filter": f"returnedtypecode eq '{entity}' and name eq '{name.replace(chr(39), chr(39)+chr(39))}' and querytype eq 0",
+            "$select": "savedqueryid",
+            "$top": 1,
+        })
+        rows2 = result2.get("value", [])
+        return rows2[0]["savedqueryid"] if rows2 else ""
+
+    # ── helper: create or retrieve a chart visualization ──────────────────
+
+    def _ensure_chart(name: str, entity: str, data_xml: str, pres_xml: str) -> str:
+        """Return an existing chart's id or create it."""
+        result = crm_get("savedqueryvisualizations", {
+            "$filter": f"primaryentitytypecode eq '{entity}' and name eq '{name.replace(chr(39), chr(39)+chr(39))}'",
+            "$select": "savedqueryvisualizationid",
+            "$top": 1,
+        })
+        rows = result.get("value", [])
+        if rows:
+            return rows[0]["savedqueryvisualizationid"]
+        data = {
+            "name": name,
+            "primaryentitytypecode": entity,
+            "datadescriptionxml": data_xml,
+            "presentationdescriptionxml": pres_xml,
+            "isdefault": False,
+        }
+        crm_post("savedqueryvisualizations", data)
+        result2 = crm_get("savedqueryvisualizations", {
+            "$filter": f"primaryentitytypecode eq '{entity}' and name eq '{name.replace(chr(39), chr(39)+chr(39))}'",
+            "$select": "savedqueryvisualizationid",
+            "$top": 1,
+        })
+        rows2 = result2.get("value", [])
+        return rows2[0]["savedqueryvisualizationid"] if rows2 else ""
+
+    # ── 1. Views ───────────────────────────────────────────────────────────
+
+    # Base lead layout (columns shown in the grid)
+    lead_layout = (
+        '<grid name="resultset" jump="fullname" select="1" icon="1" preview="1">'
+        '<row name="result" id="leadid">'
+        '<cell name="fullname" width="200"/>'
+        '<cell name="companyname" width="150"/>'
+        '<cell name="statecode" width="100"/>'
+        '<cell name="ownerid" width="150"/>'
+        '<cell name="createdon" width="120"/>'
+        '</row></grid>'
+    )
+
+    account_layout = (
+        '<grid name="resultset" jump="name" select="1" icon="1" preview="1">'
+        '<row name="result" id="accountid">'
+        '<cell name="name" width="200"/>'
+        '<cell name="telephone1" width="120"/>'
+        '<cell name="ownerid" width="150"/>'
+        '<cell name="createdon" width="120"/>'
+        '</row></grid>'
+    )
+
+    # View 1: All Run Specialty Leads
+    lead_rs_fetch = (
+        '<fetch version="1.0" output-format="xml-platform" mapping="logical" distinct="false">'
+        '<entity name="lead">'
+        '<attribute name="fullname"/><attribute name="companyname"/>'
+        '<attribute name="statecode"/><attribute name="ownerid"/>'
+        '<attribute name="leadid"/><attribute name="createdon"/>'
+        '<filter type="and">'
+        f'<condition attribute="tyr_tyrtype" operator="eq" value="{RUN_SPECIALTY_VALUE}"/>'
+        '</filter>'
+        '<order attribute="fullname" descending="false"/>'
+        '</entity></fetch>'
+    )
+    view1_id = _ensure_view("Run Specialty Leads", "lead", lead_rs_fetch, lead_layout)
+
+    # View 2: same view can be reused for leads-by-status (same data set)
+    view2_id = view1_id  # chart groups by statecode; same underlying view
+
+    # View 3: All Run Specialty Accounts
+    acct_rs_fetch = (
+        '<fetch version="1.0" output-format="xml-platform" mapping="logical" distinct="false">'
+        '<entity name="account">'
+        '<attribute name="name"/><attribute name="telephone1"/>'
+        '<attribute name="ownerid"/><attribute name="accountid"/>'
+        '<attribute name="createdon"/>'
+        '<filter type="and">'
+        '<condition attribute="tyr_tyrtype" operator="contain-values">'
+        f'<value>{RUN_SPECIALTY_VALUE}</value>'
+        '</condition>'
+        '</filter>'
+        '<order attribute="name" descending="false"/>'
+        '</entity></fetch>'
+    )
+    view3_id = _ensure_view("Run Specialty Accounts", "account", acct_rs_fetch, account_layout)
+
+    # View 4: Run Specialty Leads created in 2026
+    lead_2026_fetch = (
+        '<fetch version="1.0" output-format="xml-platform" mapping="logical" distinct="false">'
+        '<entity name="lead">'
+        '<attribute name="fullname"/><attribute name="companyname"/>'
+        '<attribute name="statecode"/><attribute name="ownerid"/>'
+        '<attribute name="leadid"/><attribute name="createdon"/>'
+        '<filter type="and">'
+        f'<condition attribute="tyr_tyrtype" operator="eq" value="{RUN_SPECIALTY_VALUE}"/>'
+        '<condition attribute="createdon" operator="on-or-after" value="2026-01-01"/>'
+        '<condition attribute="createdon" operator="on-or-before" value="2026-12-31"/>'
+        '</filter>'
+        '<order attribute="createdon" descending="false"/>'
+        '</entity></fetch>'
+    )
+    view4_id = _ensure_view("Run Specialty Leads 2026", "lead", lead_2026_fetch, lead_layout)
+
+    # View 5: Run Specialty Accounts created in 2026
+    acct_2026_fetch = (
+        '<fetch version="1.0" output-format="xml-platform" mapping="logical" distinct="false">'
+        '<entity name="account">'
+        '<attribute name="name"/><attribute name="telephone1"/>'
+        '<attribute name="ownerid"/><attribute name="accountid"/>'
+        '<attribute name="createdon"/>'
+        '<filter type="and">'
+        '<condition attribute="tyr_tyrtype" operator="contain-values">'
+        f'<value>{RUN_SPECIALTY_VALUE}</value>'
+        '</condition>'
+        '<condition attribute="createdon" operator="on-or-after" value="2026-01-01"/>'
+        '<condition attribute="createdon" operator="on-or-before" value="2026-12-31"/>'
+        '</filter>'
+        '<order attribute="createdon" descending="false"/>'
+        '</entity></fetch>'
+    )
+    view5_id = _ensure_view("Run Specialty Accounts 2026", "account", acct_2026_fetch, account_layout)
+
+    # ── 2. Chart visualizations ────────────────────────────────────────────
+
+    # Chart 1: Leads by Owner
+    chart1_data = (
+        '<datadescription><reportdatasource name="Default"/>'
+        '<measurecollection>'
+        '<measure alias="count" field="leadid" aggregate="count"/>'
+        '</measurecollection>'
+        '<groupbycollection>'
+        '<groupby alias="owner" descending="false" field="ownerid"/>'
+        '</groupbycollection></datadescription>'
+    )
+    chart1_id = _ensure_chart(
+        "Run Specialty Leads by Owner", "lead", chart1_data, _bar_chart_xml()
+    )
+
+    # Chart 2: Leads by Status
+    chart2_data = (
+        '<datadescription><reportdatasource name="Default"/>'
+        '<measurecollection>'
+        '<measure alias="count" field="leadid" aggregate="count"/>'
+        '</measurecollection>'
+        '<groupbycollection>'
+        '<groupby alias="status" descending="false" field="statecode"/>'
+        '</groupbycollection></datadescription>'
+    )
+    chart2_id = _ensure_chart(
+        "Run Specialty Leads by Status", "lead", chart2_data, _pie_chart_xml()
+    )
+
+    # Chart 3: Accounts by Owner
+    chart3_data = (
+        '<datadescription><reportdatasource name="Default"/>'
+        '<measurecollection>'
+        '<measure alias="count" field="accountid" aggregate="count"/>'
+        '</measurecollection>'
+        '<groupbycollection>'
+        '<groupby alias="owner" descending="false" field="ownerid"/>'
+        '</groupbycollection></datadescription>'
+    )
+    chart3_id = _ensure_chart(
+        "Run Specialty Accounts by Owner", "account", chart3_data, _bar_chart_xml()
+    )
+
+    # Chart 4: Leads Created by Owner by Month (2026)
+    chart4_data = (
+        '<datadescription><reportdatasource name="Default"/>'
+        '<measurecollection>'
+        '<measure alias="count" field="leadid" aggregate="count"/>'
+        '</measurecollection>'
+        '<groupbycollection>'
+        '<groupby alias="month" descending="false" field="createdon" dategrouping="month"/>'
+        '<groupby alias="owner" descending="false" field="ownerid"/>'
+        '</groupbycollection></datadescription>'
+    )
+    chart4_id = _ensure_chart(
+        "Run Specialty Leads Created by Owner by Month", "lead",
+        chart4_data, _stacked_column_chart_xml()
+    )
+
+    # Chart 5: Accounts Created by Month (2026)
+    chart5_data = (
+        '<datadescription><reportdatasource name="Default"/>'
+        '<measurecollection>'
+        '<measure alias="count" field="accountid" aggregate="count"/>'
+        '</measurecollection>'
+        '<groupbycollection>'
+        '<groupby alias="month" descending="false" field="createdon" dategrouping="month"/>'
+        '</groupbycollection></datadescription>'
+    )
+    chart5_id = _ensure_chart(
+        "Run Specialty Accounts Created by Month", "account",
+        chart5_data, _column_chart_xml()
+    )
+
+    # ── 3. Build dashboard ─────────────────────────────────────────────────
+
+    def _dash_cell(ctrl_idx: int, entity: str, view_id: str, chart_id: str, label: str) -> str:
+        safe_label = html.escape(label)
+        grid_mode = "Chart" if chart_id else "Grid"
+        viz_tag = f"<VisualizationId>{{{chart_id}}}</VisualizationId>" if chart_id else "<VisualizationId/>"
+        enable_chart_picker = "true" if chart_id else "false"
+        return (
+            f'<cell showlabel="true" locklevel="0">'
+            f'<labels><label description="{safe_label}" languagecode="1033"/></labels>'
+            f'<control id="Cust_RS_{ctrl_idx}"'
+            f' classid="{{E7A81278-8635-4d9e-8D4D-59480B391C5B}}" isrequired="false">'
+            f'<parameters>'
+            f'<ViewId>{{{view_id}}}</ViewId>'
+            f'<IsUserView>false</IsUserView>'
+            f'<RelationshipName/>'
+            f'<TargetEntityType>{entity}</TargetEntityType>'
+            f'<AutoExpand>Fixed</AutoExpand>'
+            f'<EnableQuickFind>false</EnableQuickFind>'
+            f'<EnableViewPicker>true</EnableViewPicker>'
+            f'<EnableJumpBar>false</EnableJumpBar>'
+            f'<ChartGridMode>{grid_mode}</ChartGridMode>'
+            f'{viz_tag}'
+            f'<EnableChartPicker>{enable_chart_picker}</EnableChartPicker>'
+            f'<RecordsPerPage>6</RecordsPerPage>'
+            f'</parameters></control></cell>'
+        )
+
+    components_def = [
+        ("lead",    view1_id, chart1_id, "Leads by Owner"),
+        ("lead",    view2_id, chart2_id, "Leads by Status"),
+        ("account", view3_id, chart3_id, "Accounts by Owner"),
+        ("lead",    view4_id, chart4_id, "Leads Created by Owner by Month (2026)"),
+        ("account", view5_id, chart5_id, "Accounts Created by Month (2026)"),
+    ]
+
+    left_cells = []
+    right_cells = []
+    for i, (entity, v_id, c_id, label) in enumerate(components_def):
+        if not v_id:
+            continue
+        cell = _dash_cell(i, entity, v_id, c_id, label)
+        if len(left_cells) <= len(right_cells):
+            left_cells.append(cell)
+        else:
+            right_cells.append(cell)
+
+    def _col_xml(cells, section_name, section_id):
+        rows = "".join(f"<row>{c}</row>" for c in cells)
+        return (
+            f'<column width="50%"><sections>'
+            f'<section name="{section_name}" showlabel="false" showbar="false"'
+            f' locklevel="0" id="{{{section_id}}}" columns="1">'
+            f'<labels><label description="" languagecode="1033"/></labels>'
+            f'<rows>{rows}</rows>'
+            f'</section></sections></column>'
+        )
+
+    tab_id       = str(uuid.uuid4())
+    left_sec_id  = str(uuid.uuid4())
+    right_sec_id = str(uuid.uuid4())
+    safe_name    = html.escape(DASHBOARD_NAME)
+
+    form_xml = (
+        f'<form><tabs>'
+        f'<tab name="tab_0" id="{{{tab_id}}}" locklevel="0" showlabel="false" expanded="true">'
+        f'<labels><label description="{safe_name}" languagecode="1033"/></labels>'
+        f'<columns>'
+        f'{_col_xml(left_cells, "section_0", left_sec_id)}'
+        f'{_col_xml(right_cells, "section_1", right_sec_id)}'
+        f'</columns></tab></tabs></form>'
+    )
+
+    # Look up owner for personal dashboard
+    user_email = os.getenv("DYNAMICS_USER_EMAIL", "")
+    owner_id = None
+    if user_email:
+        try:
+            owner_id = _get_user_id(user_email)
+        except Exception:
+            pass
+
+    dashboard_data = {
+        "name": DASHBOARD_NAME,
+        "description": (
+            "Run Specialty performance dashboard: leads by owner, leads by status, "
+            "accounts by owner, leads created by owner/month (2026), "
+            "and accounts created by month (2026). All filtered to TYR Type = Run Specialty."
+        ),
+        "type": 0,
+        "formxml": form_xml,
+        "objecttypecode": "none",
+    }
+
+    try:
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        if owner_id:
+            headers["MSCRMCallerID"] = owner_id
+
+        response = _requests.post(
+            f"{DYNAMICS_URL}/api/data/v9.2/userforms",
+            headers=headers,
+            json=dashboard_data,
+        )
+        if not response.ok:
+            return {
+                "success": False,
+                "error": f"Dashboard creation failed ({response.status_code}): {response.text[:400]}",
+            }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+    components_built = len(left_cells) + len(right_cells)
+    return {
+        "success": True,
+        "dashboard_name": DASHBOARD_NAME,
+        "components_built": components_built,
+        "views_created": [
+            "Run Specialty Leads",
+            "Run Specialty Accounts",
+            "Run Specialty Leads 2026",
+            "Run Specialty Accounts 2026",
+        ],
+        "charts_created": [
+            "Run Specialty Leads by Owner",
+            "Run Specialty Leads by Status",
+            "Run Specialty Accounts by Owner",
+            "Run Specialty Leads Created by Owner by Month",
+            "Run Specialty Accounts Created by Month",
+        ],
+        "owner": user_email or "service account",
+        "message": (
+            f"'{DASHBOARD_NAME}' created with {components_built} charts. "
+            "Refresh your CRM and look under My Dashboards."
+        ),
+    }
+
+
 def set_dashboard_description(name_or_id: str, description: str) -> dict:
     """
     Update the description of an existing dashboard.

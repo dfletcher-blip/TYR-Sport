@@ -54,6 +54,7 @@ from tools.views_dashboards import (
     reorder_dashboard_components,
     clone_dashboard,
     set_dashboard_description,
+    create_run_specialty_dashboard,
 )
 from tools.bulk_updates import (
     bulk_update_contacts,
@@ -210,6 +211,7 @@ TOOL_REGISTRY = {
     "get_views_summary":           get_views_summary,
     "get_dashboard_details":       get_dashboard_details,
     "reorder_dashboard_components": reorder_dashboard_components,
+    "create_run_specialty_dashboard": create_run_specialty_dashboard,
 
     # Opportunity tools
     "search_opportunities":        search_opportunities,
@@ -949,6 +951,18 @@ TOOL_DEFINITIONS = [
             },
             "required": ["name_or_id", "description"],
         },
+    },
+    {
+        "name": "create_run_specialty_dashboard",
+        "description": (
+            "Build the Run Specialty Dashboard in one shot. "
+            "Creates 5 charts all filtered to TYR Type = Run Specialty: "
+            "(1) Leads by Owner, (2) Leads by Status, (3) Accounts by Owner, "
+            "(4) Leads Created by Owner by Month for 2026, "
+            "(5) Accounts Created by Month for 2026. "
+            "Also creates the required saved views and chart visualizations automatically."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
     },
     # ── Bulk updates ───────────────────────────────────────────
     {
