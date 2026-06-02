@@ -1238,6 +1238,7 @@ def create_run_specialty_dashboard() -> dict:
     source_objecttypecode = source.get("objecttypecode", "none")
 
     # Step 2: POST using the source's valid formxml (passes schema validation)
+    # crm_post returns {"record_url": "https://.../systemforms(GUID)"} — parse the GUID from that.
     new_id = None
     try:
         clone_data = {
@@ -1252,23 +1253,28 @@ def create_run_specialty_dashboard() -> dict:
             "formxml": source["formxml"],
             "objecttypecode": source_objecttypecode,
         }
-        crm_post("systemforms", clone_data)
+        post_result = crm_post("systemforms", clone_data)
+        # Extract GUID from OData-EntityId URL: ".../systemforms(GUID)"
+        record_url = post_result.get("record_url", "")
+        if "(" in record_url and ")" in record_url:
+            new_id = record_url.split("(")[-1].rstrip(")")
     except Exception as e:
         return {"success": False, "error": f"System dashboard scaffold failed: {str(e)}"}
 
-    # Step 3: find the newly created record
-    try:
-        new_db = crm_get("systemforms", {
-            "$filter": f"name eq '{DASHBOARD_NAME}' and type eq 0",
-            "$select": "formid",
-            "$top": 1,
-            "$orderby": "createdon desc",
-        })
-        rows = new_db.get("value", [])
-        if rows:
-            new_id = rows[0]["formid"]
-    except Exception:
-        pass
+    # Fallback: query by name if URL parsing failed
+    if not new_id:
+        try:
+            new_db = crm_get("systemforms", {
+                "$filter": f"name eq '{DASHBOARD_NAME}' and type eq 0",
+                "$select": "formid",
+                "$top": 1,
+                "$orderby": "createdon desc",
+            })
+            rows = new_db.get("value", [])
+            if rows:
+                new_id = rows[0]["formid"]
+        except Exception:
+            pass
 
     if not new_id:
         return {"success": False, "error": "Dashboard was created but could not retrieve its ID to patch."}
