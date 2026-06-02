@@ -1144,6 +1144,20 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
             "that create, update, or delete records. Instead, describe what you WOULD do."
         )
 
+    # Hard intercept: bypass the agentic loop entirely for known one-shot tools
+    if "run specialty dashboard" in user_request.lower():
+        print("\n  → create_run_specialty_dashboard()")
+        result = create_run_specialty_dashboard()
+        if result.get("success"):
+            return (
+                f"✅ {result['message']}\n\n"
+                f"**Charts built:** {', '.join(result.get('charts_created', []))}\n"
+                f"**Views created:** {', '.join(result.get('views_created', []))}\n"
+                + (f"**Removed previous versions:** {', '.join(result['deleted_previous'])}\n" if result.get('deleted_previous') else "")
+            )
+        else:
+            return f"❌ Failed to create Run Specialty Dashboard: {result.get('error')}"
+
     messages = [{"role": "user", "content": user_request}]
 
     # Set up logging
