@@ -1286,7 +1286,7 @@ def create_run_specialty_dashboard() -> dict:
     except Exception:
         pass
 
-    # ── Create as system dashboard so it is visible to all users in production ─
+    # ── Create as personal dashboard (userform) with impersonation ──────────
     dashboard_data = {
         "name": DASHBOARD_NAME,
         "description": (
@@ -1295,36 +1295,34 @@ def create_run_specialty_dashboard() -> dict:
             "and accounts created by month (2026). All filtered to TYR Type = Run Specialty."
         ),
         "type": 0,
-        "formactivationstate": 1,
         "formxml": form_xml,
         "objecttypecode": "none",
     }
 
     try:
-        result = crm_post("systemforms", dashboard_data)
+        token = get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "OData-MaxVersion": "4.0",
+            "OData-Version": "4.0",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        if owner_id:
+            headers["MSCRMCallerID"] = owner_id
+
+        response = _requests.post(
+            f"{DYNAMICS_URL}/api/data/v9.2/userforms",
+            headers=headers,
+            json=dashboard_data,
+        )
+        if not response.ok:
+            return {
+                "success": False,
+                "error": f"Dashboard creation failed ({response.status_code}): {response.text[:400]}",
+            }
     except Exception as e:
         return {"success": False, "error": str(e)}
-
-    # Publish so it's immediately visible
-    try:
-        # Fetch the new dashboard id to publish it
-        new_db = crm_get("systemforms", {
-            "$filter": f"name eq '{DASHBOARD_NAME}' and type eq 0",
-            "$select": "formid",
-            "$top": 1,
-            "$orderby": "createdon desc",
-        })
-        new_rows = new_db.get("value", [])
-        if new_rows:
-            new_id = new_rows[0]["formid"]
-            publish_xml = (
-                f"<importexportxml><dashboards>"
-                f"<dashboard>{new_id}</dashboard>"
-                f"</dashboards></importexportxml>"
-            )
-            crm_action("PublishXml", {"ParameterXml": publish_xml})
-    except Exception:
-        pass
 
     components_built = len(left_cells) + len(right_cells)
     return {
@@ -1345,9 +1343,11 @@ def create_run_specialty_dashboard() -> dict:
             "Run Specialty Leads Created by Owner by Month",
             "Run Specialty Accounts Created by Month",
         ],
+        "owner_email": user_email or "service account",
+        "how_to_find": "In the CRM, go to Dashboards. Click the dropdown at the top that shows the current dashboard name, then select 'My Dashboards'. Run Specialty Dashboard will be listed there.",
         "message": (
-            f"'{DASHBOARD_NAME}' created as a system dashboard with {components_built} charts "
-            "and published. It is now visible to all users — refresh your CRM and look under Dashboards."
+            f"'{DASHBOARD_NAME}' created with {components_built} charts for {user_email or 'the configured user'}. "
+            "To view: open Dashboards in the CRM, click the dashboard name dropdown, choose My Dashboards."
         ),
     }
 
