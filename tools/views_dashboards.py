@@ -1147,9 +1147,8 @@ def create_run_specialty_dashboard() -> dict:
     right_sec_id = str(uuid.uuid4())
     safe_name    = html.escape(DASHBOARD_NAME)
 
-    form_id  = str(uuid.uuid4())
     form_xml = (
-        f'<form id="{{{form_id}}}" object="none"><tabs>'
+        f'<form><tabs>'
         f'<tab name="tab_0" id="{{{tab_id}}}" locklevel="0" showlabel="false" expanded="true">'
         f'<labels><label description="{safe_name}" languagecode="1033"/></labels>'
         f'<columns>'
