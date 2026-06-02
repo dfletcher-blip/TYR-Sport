@@ -1342,22 +1342,30 @@ def create_run_specialty_dashboard() -> dict:
     except Exception as e:
         publish_error = str(e)
 
-    # Step 6: add to every app module so it's visible in all model-driven apps
+    # Step 6: add to every app module via AddAppComponents action
     app_modules_added = []
     try:
-        apps = crm_get("appmodules", {"$select": "appmoduleid,name", "$top": 20})
+        apps = crm_get("appmodules", {"$select": "appmoduleid,uniquename,name", "$top": 20})
         for app in apps.get("value", []):
-            app_id = app.get("appmoduleid")
-            app_name = app.get("name", app_id)
+            app_unique = app.get("uniquename") or app.get("appmoduleid")
+            app_name = app.get("name", app_unique)
             try:
-                crm_post("appmodulecomponents", {
-                    "componentid": new_id,
-                    "componenttype": 60,
-                    "appmoduleid@odata.bind": f"/appmodules({app_id})",
+                crm_action("AddAppComponents", {
+                    "AppId": app_unique,
+                    "Components": json.dumps([{"type": 60, "schemaName": DASHBOARD_NAME.replace(" ", "_")}]),
                 })
                 app_modules_added.append(app_name)
             except Exception:
-                pass
+                # Fallback: direct appmodulecomponent record
+                try:
+                    crm_post("appmodulecomponents", {
+                        "componentid": new_id,
+                        "componenttype": 48,
+                        "appmoduleid@odata.bind": f"/appmodules({app.get('appmoduleid')})",
+                    })
+                    app_modules_added.append(app_name + " (direct)")
+                except Exception:
+                    pass
     except Exception:
         pass
 
