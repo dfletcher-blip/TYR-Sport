@@ -1176,7 +1176,6 @@ def create_run_specialty_dashboard() -> dict:
         "$filter": f"name eq '{DASHBOARD_NAME}' and type eq 0",
         "$select": "formid,name",
         "$top": 1,
-        "$orderby": "createdon desc",
     })
     existing_rows = existing_resp.get("value", [])
     new_id = existing_rows[0]["formid"] if existing_rows else None
@@ -1223,7 +1222,6 @@ def create_run_specialty_dashboard() -> dict:
                     "$filter": f"name eq '{DASHBOARD_NAME}' and type eq 0",
                     "$select": "formid",
                     "$top": 1,
-                    "$orderby": "createdon desc",
                 })
                 rows = fallback.get("value", [])
                 if rows:
