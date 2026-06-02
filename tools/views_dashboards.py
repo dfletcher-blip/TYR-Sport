@@ -1335,13 +1335,44 @@ def create_run_specialty_dashboard() -> dict:
     except Exception as e:
         return {"success": False, "error": f"formxml patch failed: {str(e)}"}
 
-    # Step 5: publish
+    # Step 5: PublishAllXml — more thorough than targeted PublishXml
+    publish_error = None
     try:
-        crm_action("PublishXml", {"ParameterXml": (
-            f"<importexportxml><dashboards>"
-            f"<dashboard>{new_id}</dashboard>"
-            f"</dashboards></importexportxml>"
-        )})
+        crm_action("PublishAllXml", {})
+    except Exception as e:
+        publish_error = str(e)
+
+    # Step 6: add to every app module so it's visible in all model-driven apps
+    app_modules_added = []
+    try:
+        apps = crm_get("appmodules", {"$select": "appmoduleid,name", "$top": 20})
+        for app in apps.get("value", []):
+            app_id = app.get("appmoduleid")
+            app_name = app.get("name", app_id)
+            try:
+                crm_post("appmodulecomponents", {
+                    "componentid": new_id,
+                    "componenttype": 60,
+                    "appmoduleid@odata.bind": f"/appmodules({app_id})",
+                })
+                app_modules_added.append(app_name)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Step 7: verify the dashboard exists and is active
+    verified_name = None
+    verified_state = None
+    try:
+        v = crm_get("systemforms", {
+            "$filter": f"formid eq {new_id}",
+            "$select": "name,formactivationstate",
+            "$top": 1,
+        })
+        row = v.get("value", [{}])[0]
+        verified_name = row.get("name")
+        verified_state = "Active" if row.get("formactivationstate") == 1 else "Inactive"
     except Exception:
         pass
 
@@ -1349,24 +1380,18 @@ def create_run_specialty_dashboard() -> dict:
     return {
         "success": True,
         "dashboard_name": DASHBOARD_NAME,
+        "dashboard_id": new_id,
+        "verified_in_crm": verified_name,
+        "verified_state": verified_state,
+        "environment": DYNAMICS_URL,
         "components_built": components_built,
+        "app_modules_added": app_modules_added,
+        "publish_error": publish_error,
         "deleted_previous": deleted_old,
-        "views_created": [
-            "Run Specialty Leads",
-            "Run Specialty Accounts",
-            "Run Specialty Leads 2026",
-            "Run Specialty Accounts 2026",
-        ],
-        "charts_used": [
-            "Leads by Owner (existing system chart)",
-            "Leads by Status (existing system chart)",
-            "Accounts by Owner (existing system chart)",
-            "Leads by Source (existing system chart)",
-            "Accounts by Industry (existing system chart)",
-        ],
         "message": (
-            f"'{DASHBOARD_NAME}' created as a public system dashboard with {components_built} charts "
-            "and published. Visible to all users — go to Dashboards in the CRM and select it from the list."
+            f"'{DASHBOARD_NAME}' created (ID: {new_id}) in {DYNAMICS_URL}. "
+            f"State: {verified_state}. Added to app modules: {app_modules_added or 'none'}. "
+            "Go to Dashboards in the CRM and look for it in the list."
         ),
     }
 

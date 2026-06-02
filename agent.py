@@ -1149,12 +1149,16 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
         print("\n  → create_run_specialty_dashboard()")
         result = create_run_specialty_dashboard()
         if result.get("success"):
-            return (
-                f"✅ {result['message']}\n\n"
-                f"**Charts built:** {', '.join(result.get('charts_created', []))}\n"
-                f"**Views created:** {', '.join(result.get('views_created', []))}\n"
-                + (f"**Removed previous versions:** {', '.join(result['deleted_previous'])}\n" if result.get('deleted_previous') else "")
-            )
+            lines = [f"✅ {result['message']}"]
+            lines.append(f"**Environment:** {result.get('environment')}")
+            lines.append(f"**Dashboard ID:** {result.get('dashboard_id')}")
+            lines.append(f"**Verified in CRM:** {result.get('verified_in_crm')} ({result.get('verified_state')})")
+            lines.append(f"**App modules added to:** {', '.join(result['app_modules_added']) if result.get('app_modules_added') else 'none (may need manual app module assignment)'}")
+            if result.get('publish_error'):
+                lines.append(f"**Publish warning:** {result['publish_error']}")
+            if result.get('deleted_previous'):
+                lines.append(f"**Removed previous versions:** {', '.join(result['deleted_previous'])}")
+            return "\n".join(lines)
         else:
             return f"❌ Failed to create Run Specialty Dashboard: {result.get('error')}"
 
