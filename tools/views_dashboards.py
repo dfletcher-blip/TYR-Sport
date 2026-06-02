@@ -926,27 +926,36 @@ def create_run_specialty_dashboard() -> dict:
     # ── helper: create or retrieve a saved view ────────────────────────────
 
     def _ensure_view(name: str, entity: str, fetchxml: str, layoutxml: str) -> str:
-        """Return an existing view's savedqueryid or create it and return the new id."""
+        """
+        Create or update a system view. Always patches fetchxml/layoutxml so that
+        stale views from previous runs get corrected rather than reused as-is.
+        """
+        safe_name = name.replace("'", "''")
         result = crm_get("savedqueries", {
-            "$filter": f"returnedtypecode eq '{entity}' and name eq '{name.replace(chr(39), chr(39)+chr(39))}' and querytype eq 0",
+            "$filter": f"returnedtypecode eq '{entity}' and name eq '{safe_name}' and querytype eq 0",
             "$select": "savedqueryid",
             "$top": 1,
         })
         rows = result.get("value", [])
         if rows:
-            return rows[0]["savedqueryid"]
-        data = {
+            vid = rows[0]["savedqueryid"]
+            # Always update so broken fetchxml from previous runs gets fixed
+            try:
+                crm_patch("savedqueries", vid, {"fetchxml": fetchxml, "layoutxml": layoutxml})
+            except Exception:
+                pass
+            return vid
+        # Create new view
+        crm_post("savedqueries", {
             "name": name,
             "returnedtypecode": entity,
             "querytype": 0,
             "fetchxml": fetchxml,
             "layoutxml": layoutxml,
             "isdefault": False,
-        }
-        created = crm_post("savedqueries", data)
-        # crm_post returns the created record or raises; re-fetch to get id
+        })
         result2 = crm_get("savedqueries", {
-            "$filter": f"returnedtypecode eq '{entity}' and name eq '{name.replace(chr(39), chr(39)+chr(39))}' and querytype eq 0",
+            "$filter": f"returnedtypecode eq '{entity}' and name eq '{safe_name}' and querytype eq 0",
             "$select": "savedqueryid",
             "$top": 1,
         })
@@ -1005,16 +1014,22 @@ def create_run_specialty_dashboard() -> dict:
         '</row></grid>'
     )
 
-    # View 1: All Run Specialty Leads
+    # View 1: Run Specialty Leads — filtered via parent account's tyr_tyrtype.
+    # tyr_tyrtype does NOT exist on the lead entity; we join to the parent account.
     lead_rs_fetch = (
         '<fetch version="1.0" output-format="xml-platform" mapping="logical" distinct="false">'
         '<entity name="lead">'
         '<attribute name="fullname"/><attribute name="companyname"/>'
         '<attribute name="statecode"/><attribute name="ownerid"/>'
         '<attribute name="leadid"/><attribute name="createdon"/>'
+        '<link-entity name="account" from="accountid" to="parentaccountid"'
+        ' link-type="inner" alias="parentacct">'
         '<filter type="and">'
-        f'<condition attribute="tyr_tyrtype" operator="eq" value="{RUN_SPECIALTY_VALUE}"/>'
+        '<condition attribute="tyr_tyrtype" operator="contain-values">'
+        f'<value>{RUN_SPECIALTY_VALUE}</value>'
+        '</condition>'
         '</filter>'
+        '</link-entity>'
         '<order attribute="fullname" descending="false"/>'
         '</entity></fetch>'
     )
@@ -1040,7 +1055,7 @@ def create_run_specialty_dashboard() -> dict:
     )
     view3_id = _ensure_view("Run Specialty Accounts", "account", acct_rs_fetch, account_layout)
 
-    # View 4: Run Specialty Leads created in 2026
+    # View 4: Run Specialty Leads created in 2026, filtered via parent account tyr_tyrtype
     lead_2026_fetch = (
         '<fetch version="1.0" output-format="xml-platform" mapping="logical" distinct="false">'
         '<entity name="lead">'
@@ -1048,10 +1063,17 @@ def create_run_specialty_dashboard() -> dict:
         '<attribute name="statecode"/><attribute name="ownerid"/>'
         '<attribute name="leadid"/><attribute name="createdon"/>'
         '<filter type="and">'
-        f'<condition attribute="tyr_tyrtype" operator="eq" value="{RUN_SPECIALTY_VALUE}"/>'
         '<condition attribute="createdon" operator="on-or-after" value="2026-01-01"/>'
         '<condition attribute="createdon" operator="on-or-before" value="2026-12-31"/>'
         '</filter>'
+        '<link-entity name="account" from="accountid" to="parentaccountid"'
+        ' link-type="inner" alias="parentacct">'
+        '<filter type="and">'
+        '<condition attribute="tyr_tyrtype" operator="contain-values">'
+        f'<value>{RUN_SPECIALTY_VALUE}</value>'
+        '</condition>'
+        '</filter>'
+        '</link-entity>'
         '<order attribute="createdon" descending="false"/>'
         '</entity></fetch>'
     )
@@ -1092,7 +1114,7 @@ def create_run_specialty_dashboard() -> dict:
         viz_tag = f"<VisualizationId>{{{chart_id}}}</VisualizationId>" if chart_id else "<VisualizationId/>"
         enable_chart_picker = "true" if chart_id else "false"
         return (
-            f'<cell showlabel="true" locklevel="0">'
+            f'<cell showlabel="true" locklevel="0" rowspan="10" colspan="1" auto="false">'
             f'<labels><label description="{safe_label}" languagecode="1033"/></labels>'
             f'<control id="Cust_RS_{ctrl_idx}"'
             f' classid="{{E7A81278-8635-4d9e-8D4D-59480B391C5B}}" isrequired="false">'
@@ -1141,7 +1163,10 @@ def create_run_specialty_dashboard() -> dict:
         def _rows(comp_list):
             out = ""
             for ctrl_idx, entity, v_id, c_id, label in comp_list:
+                # Leading row with the cell definition
                 out += f"<row>{_dash_cell(ctrl_idx, entity, v_id, c_id, label)}</row>"
+                # 9 empty continuation rows (required for rowspan="10" to give the component height)
+                out += "<row/>" * 9
             return out
 
         def _col(comp_list, sec_name):
