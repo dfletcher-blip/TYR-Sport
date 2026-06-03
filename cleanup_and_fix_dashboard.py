@@ -183,7 +183,24 @@ chart_renames = [
     (chart5_id, "Accounts Created by Month"),
 ]
 token = get_access_token()
+rename_succeeded = {}
 for cid, new_name in chart_renames:
+    # First fetch current name to confirm what's there
+    cur = crm_get("savedqueryvisualizations", {
+        "$filter": f"savedqueryvisualizationid eq {cid}",
+        "$select": "savedqueryvisualizationid,name,ismanaged",
+        "$top": 1,
+    })
+    cur_rows = cur.get("value", [])
+    cur_name = cur_rows[0].get("name", "?") if cur_rows else "NOT FOUND"
+    is_managed = cur_rows[0].get("ismanaged", False) if cur_rows else True
+    print(f"  Chart {cid}: current name='{cur_name}' ismanaged={is_managed}")
+
+    if cur_name == new_name:
+        print(f"    ~ Already named correctly, skipping")
+        rename_succeeded[cid] = True
+        continue
+
     try:
         resp = _requests.patch(
             f"{DYNAMICS_URL}/api/data/v9.2/savedqueryvisualizations({cid})",
@@ -197,11 +214,89 @@ for cid, new_name in chart_renames:
             timeout=30,
         )
         if resp.ok:
-            print(f"  ✓ Renamed {cid} → '{new_name}'")
+            # Verify the rename actually took
+            ver = crm_get("savedqueryvisualizations", {
+                "$filter": f"savedqueryvisualizationid eq {cid}",
+                "$select": "name", "$top": 1,
+            })
+            actual = ver.get("value", [{}])[0].get("name", "?")
+            if actual == new_name:
+                print(f"    ✓ Renamed → '{new_name}'")
+                rename_succeeded[cid] = True
+            else:
+                print(f"    ✗ PATCH returned OK but name is still '{actual}' (system chart is read-only)")
+                rename_succeeded[cid] = False
         else:
-            print(f"  ✗ Rename failed ({resp.status_code}): {resp.text[:200]}")
+            print(f"    ✗ PATCH failed ({resp.status_code}): {resp.text[:300]}")
+            rename_succeeded[cid] = False
     except Exception as e:
-        print(f"  ✗ Error renaming {cid}: {e}")
+        print(f"    ✗ Error: {e}")
+        rename_succeeded[cid] = False
+
+# If system chart rename failed, create custom userqueryvisualization copies with correct names
+# These ARE patchable and show in dashboards the same way
+any_failed = any(not v for v in rename_succeeded.values())
+if any_failed:
+    print("\n  System charts are read-only — creating custom chart copies with correct names...")
+    custom_chart_map = {}  # cid → new_custom_id
+    for cid, new_name in chart_renames:
+        if rename_succeeded.get(cid):
+            continue
+        # Fetch the chart's datadescriptionxml and presentationdescriptionxml
+        chart_r = crm_get("savedqueryvisualizations", {
+            "$filter": f"savedqueryvisualizationid eq {cid}",
+            "$select": "savedqueryvisualizationid,name,primaryentitytypecode,datadescriptionxml,presentationdescriptionxml",
+            "$top": 1,
+        })
+        chart_rows = chart_r.get("value", [])
+        if not chart_rows:
+            print(f"    ✗ Could not fetch chart data for {cid}")
+            continue
+        c = chart_rows[0]
+        # POST a new savedqueryvisualization with the renamed name
+        try:
+            post_resp = _requests.post(
+                f"{DYNAMICS_URL}/api/data/v9.2/savedqueryvisualizations",
+                json={
+                    "name": new_name,
+                    "primaryentitytypecode": c["primaryentitytypecode"],
+                    "datadescriptionxml": c.get("datadescriptionxml", ""),
+                    "presentationdescriptionxml": c.get("presentationdescriptionxml", ""),
+                },
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "OData-MaxVersion": "4.0",
+                    "OData-Version": "4.0",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=representation",
+                },
+                timeout=30,
+            )
+            if post_resp.ok:
+                new_id = post_resp.json().get("savedqueryvisualizationid")
+                if not new_id:
+                    loc = post_resp.headers.get("OData-EntityId", "")
+                    new_id = loc.split("(")[-1].rstrip(")") if "(" in loc else None
+                if new_id:
+                    custom_chart_map[cid] = new_id
+                    print(f"    ✓ Created '{new_name}' as new chart {new_id}")
+                else:
+                    print(f"    ✗ Created but could not parse new ID")
+            else:
+                print(f"    ✗ POST failed ({post_resp.status_code}): {post_resp.text[:300]}")
+        except Exception as e:
+            print(f"    ✗ POST error: {e}")
+
+    # Remap chart IDs to custom copies
+    if chart1_id in custom_chart_map:
+        chart1_id = custom_chart_map[chart1_id]
+        print(f"  Using custom chart1: {chart1_id}")
+    if chart4_id in custom_chart_map:
+        chart4_id = custom_chart_map[chart4_id]
+        print(f"  Using custom chart4: {chart4_id}")
+    if chart5_id in custom_chart_map:
+        chart5_id = custom_chart_map[chart5_id]
+        print(f"  Using custom chart5: {chart5_id}")
 
 # ── 4. Build formxml ─────────────────────────────────────────────────────────
 print("\n" + "=" * 60)
