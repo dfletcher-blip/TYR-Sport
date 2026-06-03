@@ -277,6 +277,22 @@ except Exception as e:
     print(f"  ✗ PATCH failed: {e}")
     sys.exit(1)
 
+# ── Step 6b: Verify what is actually stored in CRM ────────────────────────────
+print("\nVerifying stored formxml...")
+verify_r = crm_get("systemforms", {
+    "$filter": f"formid eq {dash_id}",
+    "$select": "formxml",
+    "$top": 1,
+})
+stored_xml = verify_r.get("value", [{}])[0].get("formxml", "")
+stored_viz_ids = re.findall(r'<VisualizationId>\{([^}]+)\}</VisualizationId>', stored_xml)
+stored_view_ids = re.findall(r'<ViewId>\{([^}]+)\}</ViewId>', stored_xml)
+stored_labels = re.findall(r'<label description="([^"]+)" languagecode="1033"', stored_xml)
+print(f"  Stored formxml length: {len(stored_xml)}")
+print(f"  Stored ViewIds:        {stored_view_ids}")
+print(f"  Stored VisualizationIds: {stored_viz_ids}")
+print(f"  Stored labels: {[l for l in stored_labels if l]}")
+
 # ── Step 7: Publish ────────────────────────────────────────────────────────────
 print("\nPublishing dashboard specifically by ID...")
 try:
