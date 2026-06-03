@@ -278,12 +278,25 @@ except Exception as e:
     sys.exit(1)
 
 # ── Step 7: Publish ────────────────────────────────────────────────────────────
-print("\nPublishing all customizations...")
+print("\nPublishing dashboard specifically by ID...")
 try:
-    crm_action("PublishAllXml", {})
-    print("  ✓ Published")
+    # Target the specific dashboard — PublishAllXml misses direct Web API PATCHes
+    publish_xml = (
+        "<importexportxml>"
+        "<dashboards>"
+        f"<dashboard>{dash_id}</dashboard>"
+        "</dashboards>"
+        "</importexportxml>"
+    )
+    crm_action("PublishXml", {"ParameterXml": publish_xml})
+    print("  ✓ PublishXml (targeted) succeeded")
 except Exception as e:
-    print(f"  ✗ Publish failed: {e}")
+    print(f"  ~ PublishXml targeted failed ({e}), trying PublishAllXml...")
+    try:
+        crm_action("PublishAllXml", {})
+        print("  ✓ PublishAllXml succeeded")
+    except Exception as e2:
+        print(f"  ✗ Both publish attempts failed: {e2}")
 
 print(f"""
 Done. Dashboard ID: {dash_id}
