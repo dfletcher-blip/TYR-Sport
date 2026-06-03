@@ -1105,13 +1105,12 @@ def create_run_specialty_dashboard() -> dict:
     )
     view5_id = _ensure_view("Run Specialty Accounts 2026", "account", acct_2026_fetch, account_layout)
 
-    # ── 2. Look up existing system charts (API does not allow creating new ones) ─
-    # Use whatever chart exists for each entity as a fallback if named one not found.
+    # ── 2. Look up system charts by their confirmed CRM names ─────────────────
     chart1_id = _get_chart_id("lead",    "Leads by Owner")
-    chart2_id = _get_chart_id("lead",    "Leads by Status")
+    chart2_id = _get_chart_id("lead",    "Run Specialty Leads by Status")
     chart3_id = _get_chart_id("account", "Accounts by Owner")
-    chart4_id = _get_chart_id("lead",    "Leads by Source")   # best available monthly proxy
-    chart5_id = _get_chart_id("account", "Accounts by Industry")  # best available for accounts
+    chart4_id = _get_chart_id("lead",    "Incoming Lead Analysis by Month")
+    chart5_id = _get_chart_id("account", "New Accounts By Month")
 
     # ── 3. Build dashboard ─────────────────────────────────────────────────
 

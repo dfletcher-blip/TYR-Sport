@@ -96,13 +96,18 @@ def get_chart_id(entity, preferred_name):
     print(f"  ~ no chart named '{preferred_name}' — will show as list view")
     return ""
 
-print("\nResolving charts for dashboard...")
-chart1_id = get_chart_id("lead",    "Leads by Owner")
-chart2_id = get_chart_id("lead",    "Leads by Status")
-chart3_id = get_chart_id("account", "Accounts by Owner")
-# Monthly breakdown charts don't exist as system charts — these will render as list views
-chart4_id = get_chart_id("lead",    "Leads by Owner")   # best available for leads 2026
-chart5_id = get_chart_id("account", "Accounts by Owner")  # best available for accounts 2026
+print("\nUsing confirmed chart IDs from CRM:")
+# Exact IDs from CRM — no lookup needed
+chart1_id = "ad936200-375f-df11-ae90-00155d2e3002"  # Leads by Owner
+chart2_id = "aed15f95-915e-f111-a826-00224805fad6"  # Run Specialty Leads by Status
+chart3_id = "a3a9ee47-5093-de11-97d4-00155da3b01e"  # Accounts by Owner
+chart4_id = "eec61ec1-3a5f-df11-ae90-00155d2e3002"  # Incoming Lead Analysis by Month
+chart5_id = "5b290fff-355f-df11-ae90-00155d2e3002"  # New Accounts By Month
+print(f"  chart1 Leads by Owner:                    {chart1_id}")
+print(f"  chart2 Run Specialty Leads by Status:     {chart2_id}")
+print(f"  chart3 Accounts by Owner:                 {chart3_id}")
+print(f"  chart4 Incoming Lead Analysis by Month:   {chart4_id}")
+print(f"  chart5 New Accounts By Month:             {chart5_id}")
 
 # ── Step 3: Fetch an existing working system dashboard as structure template ───
 print("\nFetching source dashboard template...")
@@ -146,10 +151,12 @@ def make_cell(ctrl_idx, entity, view_id, chart_id, label):
             if 'showlabel' not in cell_attrs:
                 cell_attrs += ' showlabel="true"'
 
+    cell_id = "{" + str(uuid.uuid4()) + "}"
+    ctrl_uid = "{" + str(uuid.uuid4()) + "}"
     return (
-        f'<cell {cell_attrs}>'
+        f'<cell {cell_attrs} id="{cell_id}">'
         f'<labels><label description="{safe_label}" languagecode="1033"/></labels>'
-        f'<control id="RS_ctrl_{ctrl_idx}" classid="{{E7A81278-8635-4d9e-8D4D-59480B391C5B}}" isrequired="false">'
+        f'<control id="RS_ctrl_{ctrl_idx}" uniqueid="{ctrl_uid}" classid="{{E7A81278-8635-4d9e-8D4D-59480B391C5B}}" isrequired="false">'
         f'<parameters>'
         f'<ViewId>{{{view_id}}}</ViewId>'
         f'<IsUserView>false</IsUserView>'
