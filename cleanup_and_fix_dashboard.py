@@ -20,7 +20,7 @@ print("=" * 60)
 # System dashboards
 sys_r = crm_get("systemforms", {
     "$filter": f"contains(name, 'Run Specialty') and type eq 0",
-    "$select": "formid,name,formactivationstate,modifiedon",
+    "$select": "formid,name,formactivationstate",
     "$top": 20,
 })
 sys_dashes = sys_r.get("value", [])
@@ -29,17 +29,17 @@ for d in sys_dashes:
     print(f"  ID: {d['formid']}")
     print(f"  Name: {d['name']}")
     print(f"  Active: {d.get('formactivationstate')} (1=active)")
-    print(f"  Modified: {d.get('modifiedon')}")
     print()
 
 if len(sys_dashes) < 2:
     print("Only one system dashboard found — no duplicates to clean up.")
 else:
-    # Keep the most recently modified one, delete the rest
-    sorted_dashes = sorted(sys_dashes, key=lambda x: x.get("modifiedon", ""), reverse=True)
-    keep = sorted_dashes[0]
-    delete_list = sorted_dashes[1:]
-    print(f"Keeping:  {keep['formid']} ({keep['name']}, modified {keep.get('modifiedon')})")
+    # Prefer the known-good ID from previous runs; otherwise keep the first active one
+    KNOWN_GOOD_ID = "127b4f86-9f5e-f111-a826-00224805f22c"
+    known = [d for d in sys_dashes if d["formid"] == KNOWN_GOOD_ID]
+    keep = known[0] if known else sys_dashes[0]
+    delete_list = [d for d in sys_dashes if d["formid"] != keep["formid"]]
+    print(f"Keeping:  {keep['formid']} ({keep['name']})")
     for d in delete_list:
         print(f"Deleting: {d['formid']} ({d['name']})")
         try:
