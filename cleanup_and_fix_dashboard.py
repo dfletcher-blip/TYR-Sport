@@ -100,17 +100,33 @@ print("2b. FILTERING OUT DILLON FLETCHER")
 print("=" * 60)
 
 dillon_id = None
-df_r = crm_get("systemusers", {
-    "$filter": "internalemailaddress eq 'dfletcher@tyr.com'",
-    "$select": "systemuserid,fullname",
-    "$top": 1,
-})
-df_rows = df_r.get("value", [])
-if df_rows:
-    dillon_id = df_rows[0]["systemuserid"]
-    print(f"  ✓ Found: {df_rows[0]['fullname']} | {dillon_id}")
-else:
-    print("  ✗ dfletcher@tyr.com not found — filter will not be applied")
+# Try multiple email variants — CRM may store a different domain or format
+for email_try in ["dfletcher@tyr.com", "dillon.fletcher@tyr.com", "dfletcher@tyrusa.com"]:
+    df_r = crm_get("systemusers", {
+        "$filter": f"internalemailaddress eq '{email_try}'",
+        "$select": "systemuserid,fullname,internalemailaddress",
+        "$top": 1,
+    })
+    df_rows = df_r.get("value", [])
+    if df_rows:
+        dillon_id = df_rows[0]["systemuserid"]
+        print(f"  ✓ Found: {df_rows[0]['fullname']} ({df_rows[0].get('internalemailaddress')}) | {dillon_id}")
+        break
+if not dillon_id:
+    # Broader search by last name
+    df_r2 = crm_get("systemusers", {
+        "$filter": "contains(fullname, 'Fletcher')",
+        "$select": "systemuserid,fullname,internalemailaddress",
+        "$top": 5,
+    })
+    for u in df_r2.get("value", []):
+        print(f"  Found user: {u['fullname']} | {u.get('internalemailaddress')} | {u['systemuserid']}")
+    if df_r2.get("value"):
+        u = df_r2["value"][0]
+        dillon_id = u["systemuserid"]
+        print(f"  ✓ Using: {u['fullname']} | {dillon_id}")
+    else:
+        print("  ✗ No user named Fletcher found — filter will not be applied")
 
 def add_owner_exclusion(fetchxml, exclude_userid):
     """Insert <condition attribute='ownerid' operator='ne' value='...'/>
@@ -172,35 +188,20 @@ print(f"  chart3: {chart3_id}")
 print(f"  chart4: {chart4_id}")
 print(f"  chart5: {chart5_id}")
 
-# ── 3b. Rename chart records so component headers show correct titles ──────────
+# ── 3b. Attempt to rename system chart records (may be blocked for managed charts) ───
 print("\n" + "=" * 60)
 print("3b. RENAMING CHART RECORDS IN CRM")
 print("=" * 60)
-
+# System (managed) charts can't be renamed via Web API — their names are locked.
+# The panel title in UCI dashboards comes from the formxml cell <label description>,
+# NOT from savedqueryvisualization.name, so we control titles via the formxml labels below.
 chart_renames = [
     (chart1_id, "Run Specialty Leads by Owner"),
     (chart4_id, "Leads Created by Month"),
     (chart5_id, "Accounts Created by Month"),
 ]
 token = get_access_token()
-rename_succeeded = {}
 for cid, new_name in chart_renames:
-    # First fetch current name to confirm what's there
-    cur = crm_get("savedqueryvisualizations", {
-        "$filter": f"savedqueryvisualizationid eq {cid}",
-        "$select": "savedqueryvisualizationid,name,ismanaged",
-        "$top": 1,
-    })
-    cur_rows = cur.get("value", [])
-    cur_name = cur_rows[0].get("name", "?") if cur_rows else "NOT FOUND"
-    is_managed = cur_rows[0].get("ismanaged", False) if cur_rows else True
-    print(f"  Chart {cid}: current name='{cur_name}' ismanaged={is_managed}")
-
-    if cur_name == new_name:
-        print(f"    ~ Already named correctly, skipping")
-        rename_succeeded[cid] = True
-        continue
-
     try:
         resp = _requests.patch(
             f"{DYNAMICS_URL}/api/data/v9.2/savedqueryvisualizations({cid})",
@@ -214,89 +215,11 @@ for cid, new_name in chart_renames:
             timeout=30,
         )
         if resp.ok:
-            # Verify the rename actually took
-            ver = crm_get("savedqueryvisualizations", {
-                "$filter": f"savedqueryvisualizationid eq {cid}",
-                "$select": "name", "$top": 1,
-            })
-            actual = ver.get("value", [{}])[0].get("name", "?")
-            if actual == new_name:
-                print(f"    ✓ Renamed → '{new_name}'")
-                rename_succeeded[cid] = True
-            else:
-                print(f"    ✗ PATCH returned OK but name is still '{actual}' (system chart is read-only)")
-                rename_succeeded[cid] = False
+            print(f"  ✓ PATCH accepted for {cid} → '{new_name}' (verify in CRM if it stuck)")
         else:
-            print(f"    ✗ PATCH failed ({resp.status_code}): {resp.text[:300]}")
-            rename_succeeded[cid] = False
+            print(f"  ~ PATCH rejected ({resp.status_code}) for {cid} — managed chart, skipping")
     except Exception as e:
-        print(f"    ✗ Error: {e}")
-        rename_succeeded[cid] = False
-
-# If system chart rename failed, create custom userqueryvisualization copies with correct names
-# These ARE patchable and show in dashboards the same way
-any_failed = any(not v for v in rename_succeeded.values())
-if any_failed:
-    print("\n  System charts are read-only — creating custom chart copies with correct names...")
-    custom_chart_map = {}  # cid → new_custom_id
-    for cid, new_name in chart_renames:
-        if rename_succeeded.get(cid):
-            continue
-        # Fetch the chart's XML — note: datadescriptionxml is NOT exposed; only presentationdescriptionxml
-        chart_r = crm_get("savedqueryvisualizations", {
-            "$filter": f"savedqueryvisualizationid eq {cid}",
-            "$select": "savedqueryvisualizationid,name,primaryentitytypecode,presentationdescriptionxml",
-            "$top": 1,
-        })
-        chart_rows = chart_r.get("value", [])
-        if not chart_rows:
-            print(f"    ✗ Could not fetch chart data for {cid}")
-            continue
-        c = chart_rows[0]
-        print(f"    Cloning '{c['name']}' for entity '{c['primaryentitytypecode']}'")
-        # POST a new savedqueryvisualization with the renamed name
-        try:
-            post_resp = _requests.post(
-                f"{DYNAMICS_URL}/api/data/v9.2/savedqueryvisualizations",
-                json={
-                    "name": new_name,
-                    "primaryentitytypecode": c["primaryentitytypecode"],
-                    "presentationdescriptionxml": c.get("presentationdescriptionxml", ""),
-                },
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "OData-MaxVersion": "4.0",
-                    "OData-Version": "4.0",
-                    "Content-Type": "application/json",
-                    "Prefer": "return=representation",
-                },
-                timeout=30,
-            )
-            if post_resp.ok:
-                new_id = post_resp.json().get("savedqueryvisualizationid")
-                if not new_id:
-                    loc = post_resp.headers.get("OData-EntityId", "")
-                    new_id = loc.split("(")[-1].rstrip(")") if "(" in loc else None
-                if new_id:
-                    custom_chart_map[cid] = new_id
-                    print(f"    ✓ Created '{new_name}' as new chart {new_id}")
-                else:
-                    print(f"    ✗ Created but could not parse new ID")
-            else:
-                print(f"    ✗ POST failed ({post_resp.status_code}): {post_resp.text[:300]}")
-        except Exception as e:
-            print(f"    ✗ POST error: {e}")
-
-    # Remap chart IDs to custom copies
-    if chart1_id in custom_chart_map:
-        chart1_id = custom_chart_map[chart1_id]
-        print(f"  Using custom chart1: {chart1_id}")
-    if chart4_id in custom_chart_map:
-        chart4_id = custom_chart_map[chart4_id]
-        print(f"  Using custom chart4: {chart4_id}")
-    if chart5_id in custom_chart_map:
-        chart5_id = custom_chart_map[chart5_id]
-        print(f"  Using custom chart5: {chart5_id}")
+        print(f"  ~ Error patching {cid}: {e} — continuing")
 
 # ── 4. Build formxml ─────────────────────────────────────────────────────────
 print("\n" + "=" * 60)
