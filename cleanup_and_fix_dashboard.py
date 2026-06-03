@@ -161,16 +161,47 @@ if dillon_id:
 print("\n" + "=" * 60)
 print("3. CHART IDs (hardcoded from confirmed CRM values)")
 print("=" * 60)
-chart1_id = "ad936200-375f-df11-ae90-00155d2e3002"  # Leads by Owner
+chart1_id = "ad936200-375f-df11-ae90-00155d2e3002"  # Leads by Owner → Run Specialty Leads by Owner
 chart2_id = "aed15f95-915e-f111-a826-00224805fad6"  # Run Specialty Leads by Status
 chart3_id = "a3a9ee47-5093-de11-97d4-00155da3b01e"  # Accounts by Owner
-chart4_id = "eec61ec1-3a5f-df11-ae90-00155d2e3002"  # Incoming Lead Analysis by Month
-chart5_id = "5b290fff-355f-df11-ae90-00155d2e3002"  # New Accounts By Month
-print(f"  chart1 Leads by Owner:                   {chart1_id}")
-print(f"  chart2 Run Specialty Leads by Status:    {chart2_id}")
-print(f"  chart3 Accounts by Owner:                {chart3_id}")
-print(f"  chart4 Incoming Lead Analysis by Month:  {chart4_id}")
-print(f"  chart5 New Accounts By Month:            {chart5_id}")
+chart4_id = "eec61ec1-3a5f-df11-ae90-00155d2e3002"  # Incoming Lead Analysis by Month → Leads Created by Month
+chart5_id = "5b290fff-355f-df11-ae90-00155d2e3002"  # New Accounts By Month → Accounts Created by Month
+print(f"  chart1: {chart1_id}")
+print(f"  chart2: {chart2_id}")
+print(f"  chart3: {chart3_id}")
+print(f"  chart4: {chart4_id}")
+print(f"  chart5: {chart5_id}")
+
+# ── 3b. Rename chart records so component headers show correct titles ──────────
+print("\n" + "=" * 60)
+print("3b. RENAMING CHART RECORDS IN CRM")
+print("=" * 60)
+
+chart_renames = [
+    (chart1_id, "Run Specialty Leads by Owner"),
+    (chart4_id, "Leads Created by Month"),
+    (chart5_id, "Accounts Created by Month"),
+]
+token = get_access_token()
+for cid, new_name in chart_renames:
+    try:
+        resp = _requests.patch(
+            f"{DYNAMICS_URL}/api/data/v9.2/savedqueryvisualizations({cid})",
+            json={"name": new_name},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "OData-MaxVersion": "4.0",
+                "OData-Version": "4.0",
+                "Content-Type": "application/json",
+            },
+            timeout=30,
+        )
+        if resp.ok:
+            print(f"  ✓ Renamed {cid} → '{new_name}'")
+        else:
+            print(f"  ✗ Rename failed ({resp.status_code}): {resp.text[:200]}")
+    except Exception as e:
+        print(f"  ✗ Error renaming {cid}: {e}")
 
 # ── 4. Build formxml ─────────────────────────────────────────────────────────
 print("\n" + "=" * 60)
