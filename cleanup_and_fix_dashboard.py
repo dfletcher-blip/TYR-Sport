@@ -242,10 +242,10 @@ if any_failed:
     for cid, new_name in chart_renames:
         if rename_succeeded.get(cid):
             continue
-        # Fetch the chart's datadescriptionxml and presentationdescriptionxml
+        # Fetch the chart's XML — note: datadescriptionxml is NOT exposed; only presentationdescriptionxml
         chart_r = crm_get("savedqueryvisualizations", {
             "$filter": f"savedqueryvisualizationid eq {cid}",
-            "$select": "savedqueryvisualizationid,name,primaryentitytypecode,datadescriptionxml,presentationdescriptionxml",
+            "$select": "savedqueryvisualizationid,name,primaryentitytypecode,presentationdescriptionxml",
             "$top": 1,
         })
         chart_rows = chart_r.get("value", [])
@@ -253,6 +253,7 @@ if any_failed:
             print(f"    ✗ Could not fetch chart data for {cid}")
             continue
         c = chart_rows[0]
+        print(f"    Cloning '{c['name']}' for entity '{c['primaryentitytypecode']}'")
         # POST a new savedqueryvisualization with the renamed name
         try:
             post_resp = _requests.post(
@@ -260,7 +261,6 @@ if any_failed:
                 json={
                     "name": new_name,
                     "primaryentitytypecode": c["primaryentitytypecode"],
-                    "datadescriptionxml": c.get("datadescriptionxml", ""),
                     "presentationdescriptionxml": c.get("presentationdescriptionxml", ""),
                 },
                 headers={
