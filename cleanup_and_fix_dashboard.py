@@ -101,7 +101,7 @@ print("=" * 60)
 
 dillon_id = None
 # Try multiple email variants — CRM may store a different domain or format
-for email_try in ["dfletcher@tyr.com", "dillon.fletcher@tyr.com", "dfletcher@tyrusa.com"]:
+for email_try in ["dfletcher@TYRsportoffice.onmicrosoft.com", "dfletcher@tyr.com", "dillon.fletcher@tyr.com"]:
     df_r = crm_get("systemusers", {
         "$filter": f"internalemailaddress eq '{email_try}'",
         "$select": "systemuserid,fullname,internalemailaddress",
