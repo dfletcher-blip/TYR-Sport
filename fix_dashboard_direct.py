@@ -141,12 +141,14 @@ def make_cell(ctrl_idx, entity, view_id, chart_id, label):
     chart_picker = "true" if chart_id else "false"
 
     # Extract cell attributes from template (rowspan, colspan, etc.)
-    cell_attrs = 'showlabel="true" locklevel="0" rowspan="10" colspan="1" auto="false"'
+    cell_attrs = 'showlabel="true" locklevel="0" rowspan="9" colspan="1" auto="false"'
     if first_cell:
         m = re.search(r'<cell([^>]*)>', first_cell.group())
         if m:
             cell_attrs = m.group(1).strip()
-            # Make sure showlabel=true
+            # Remove id — we supply our own unique id per cell
+            cell_attrs = re.sub(r'\s*id="[^"]*"', '', cell_attrs)
+            # Ensure showlabel=true
             cell_attrs = re.sub(r'showlabel="[^"]*"', 'showlabel="true"', cell_attrs)
             if 'showlabel' not in cell_attrs:
                 cell_attrs += ' showlabel="true"'
