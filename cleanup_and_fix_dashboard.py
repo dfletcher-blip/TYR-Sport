@@ -1,0 +1,261 @@
+"""
+Cleanup and fix for duplicate Run Specialty Dashboards.
+Run locally: python cleanup_and_fix_dashboard.py
+"""
+import sys, os, re, uuid, html
+sys.path.insert(0, os.path.dirname(__file__))
+from dotenv import load_dotenv
+load_dotenv()
+from config.crm_connection import crm_get, crm_patch, crm_action, get_access_token, DYNAMICS_URL
+import requests as _requests
+
+DASHBOARD_NAME = "Run Specialty Dashboard"
+RUN_SPECIALTY_VALUE = 935650018
+
+# ── 1. Find ALL Run Specialty Dashboards ─────────────────────────────────────
+print("=" * 60)
+print("1. ALL RUN SPECIALTY DASHBOARDS IN CRM")
+print("=" * 60)
+
+# System dashboards
+sys_r = crm_get("systemforms", {
+    "$filter": f"contains(name, 'Run Specialty') and type eq 0",
+    "$select": "formid,name,formactivationstate,modifiedon",
+    "$top": 20,
+})
+sys_dashes = sys_r.get("value", [])
+print(f"\nSystem dashboards ({len(sys_dashes)} found):")
+for d in sys_dashes:
+    print(f"  ID: {d['formid']}")
+    print(f"  Name: {d['name']}")
+    print(f"  Active: {d.get('formactivationstate')} (1=active)")
+    print(f"  Modified: {d.get('modifiedon')}")
+    print()
+
+if len(sys_dashes) < 2:
+    print("Only one system dashboard found — no duplicates to clean up.")
+else:
+    # Keep the most recently modified one, delete the rest
+    sorted_dashes = sorted(sys_dashes, key=lambda x: x.get("modifiedon", ""), reverse=True)
+    keep = sorted_dashes[0]
+    delete_list = sorted_dashes[1:]
+    print(f"Keeping:  {keep['formid']} ({keep['name']}, modified {keep.get('modifiedon')})")
+    for d in delete_list:
+        print(f"Deleting: {d['formid']} ({d['name']})")
+        try:
+            token = get_access_token()
+            resp = _requests.delete(
+                f"{DYNAMICS_URL}/api/data/v9.2/systemforms({d['formid']})",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "OData-MaxVersion": "4.0",
+                    "OData-Version": "4.0",
+                },
+                timeout=30,
+            )
+            if resp.ok:
+                print(f"  ✓ Deleted")
+            else:
+                print(f"  ✗ Delete failed ({resp.status_code}): {resp.text[:200]}")
+        except Exception as e:
+            print(f"  ✗ Error: {e}")
+    dash_id = keep["formid"]
+    print(f"\nUsing dashboard ID: {dash_id}")
+
+if len(sys_dashes) == 0:
+    print("No dashboard found — will create one.")
+    dash_id = None
+elif len(sys_dashes) == 1:
+    dash_id = sys_dashes[0]["formid"]
+    print(f"Using dashboard ID: {dash_id}")
+
+# ── 2. Resolve view IDs ───────────────────────────────────────────────────────
+print("\n" + "=" * 60)
+print("2. VIEW IDs")
+print("=" * 60)
+
+def get_view_id(name):
+    r = crm_get("savedqueries", {
+        "$filter": f"name eq '{name}' and querytype eq 0",
+        "$select": "savedqueryid,name,returnedtypecode,statecode",
+        "$top": 1,
+    })
+    rows = r.get("value", [])
+    if rows:
+        v = rows[0]
+        print(f"  ✓ {name} | {v['savedqueryid']} | statecode={v.get('statecode')}")
+        return v["savedqueryid"]
+    print(f"  ✗ MISSING: {name}")
+    return None
+
+view1_id = get_view_id("Run Specialty Leads")
+view2_id = view1_id
+view3_id = get_view_id("Run Specialty Accounts")
+view4_id = get_view_id("Run Specialty Leads 2026")
+view5_id = get_view_id("Run Specialty Accounts 2026")
+
+# ── 3. Hardcoded chart IDs (confirmed from previous run) ─────────────────────
+print("\n" + "=" * 60)
+print("3. CHART IDs (hardcoded from confirmed CRM values)")
+print("=" * 60)
+chart1_id = "ad936200-375f-df11-ae90-00155d2e3002"  # Leads by Owner
+chart2_id = "aed15f95-915e-f111-a826-00224805fad6"  # Run Specialty Leads by Status
+chart3_id = "a3a9ee47-5093-de11-97d4-00155da3b01e"  # Accounts by Owner
+chart4_id = "eec61ec1-3a5f-df11-ae90-00155d2e3002"  # Incoming Lead Analysis by Month
+chart5_id = "5b290fff-355f-df11-ae90-00155d2e3002"  # New Accounts By Month
+print(f"  chart1 Leads by Owner:                   {chart1_id}")
+print(f"  chart2 Run Specialty Leads by Status:    {chart2_id}")
+print(f"  chart3 Accounts by Owner:                {chart3_id}")
+print(f"  chart4 Incoming Lead Analysis by Month:  {chart4_id}")
+print(f"  chart5 New Accounts By Month:            {chart5_id}")
+
+# ── 4. Build formxml ─────────────────────────────────────────────────────────
+print("\n" + "=" * 60)
+print("4. BUILDING FORMXML")
+print("=" * 60)
+
+def make_cell(ctrl_idx, entity, view_id, chart_id, label):
+    safe_label = html.escape(label)
+    grid_mode = "Chart" if chart_id else "Grid"
+    viz = f"<VisualizationId>{{{chart_id}}}</VisualizationId>" if chart_id else "<VisualizationId/>"
+    chart_picker = "true" if chart_id else "false"
+    cell_id = "{" + str(uuid.uuid4()) + "}"
+    ctrl_uid = "{" + str(uuid.uuid4()) + "}"
+    return (
+        f'<cell colspan="1" rowspan="9" showlabel="true" id="{cell_id}" auto="false">'
+        f'<labels><label description="{safe_label}" languagecode="1033"/></labels>'
+        f'<control id="RS_{ctrl_idx}" uniqueid="{ctrl_uid}"'
+        f' classid="{{E7A81278-8635-4d9e-8D4D-59480B391C5B}}" isrequired="false">'
+        f'<parameters>'
+        f'<ViewId>{{{view_id}}}</ViewId>'
+        f'<IsUserView>false</IsUserView>'
+        f'<RelationshipName/>'
+        f'<TargetEntityType>{entity}</TargetEntityType>'
+        f'<AutoExpand>Fixed</AutoExpand>'
+        f'<EnableQuickFind>false</EnableQuickFind>'
+        f'<EnableViewPicker>true</EnableViewPicker>'
+        f'<EnableJumpBar>false</EnableJumpBar>'
+        f'<ChartGridMode>{grid_mode}</ChartGridMode>'
+        f'{viz}'
+        f'<EnableChartPicker>{chart_picker}</EnableChartPicker>'
+        f'<RecordsPerPage>12</RecordsPerPage>'
+        f'</parameters></control></cell>'
+    )
+
+def make_col(comps, sec_name):
+    sec_id = "{" + str(uuid.uuid4()) + "}"
+    rows_xml = ""
+    for (ctrl_idx, entity, view_id, chart_id, label) in comps:
+        if not view_id:
+            print(f"  SKIPPING '{label}' — no view ID")
+            continue
+        rows_xml += f"<row>{make_cell(ctrl_idx, entity, view_id, chart_id, label)}</row>"
+        rows_xml += "<row/>" * 8  # 8 continuation rows for rowspan=9
+        print(f"  + {label}")
+    return (
+        f'<column width="50%"><sections>'
+        f'<section name="{sec_name}" showlabel="false" showbar="false"'
+        f' locklevel="0" id="{sec_id}" columns="1">'
+        f'<labels><label description="" languagecode="1033"/></labels>'
+        f'<rows>{rows_xml}</rows>'
+        f'</section></sections></column>'
+    )
+
+tab_id = "{" + str(uuid.uuid4()) + "}"
+left_comps = [
+    (0, "lead",    view1_id, chart1_id, "Leads by Owner"),
+    (1, "lead",    view2_id, chart2_id, "Leads by Status"),
+    (2, "account", view3_id, chart3_id, "Accounts by Owner"),
+]
+right_comps = [
+    (3, "lead",    view4_id, chart4_id, "Leads Created by Owner by Month (2026)"),
+    (4, "account", view5_id, chart5_id, "Accounts Created by Month (2026)"),
+]
+
+print("Left column:")
+left_xml = make_col(left_comps, "section_left")
+print("Right column:")
+right_xml = make_col(right_comps, "section_right")
+
+new_formxml = (
+    '<form>'
+    '<tabs>'
+    f'<tab name="tab" showlabel="false" locklevel="0" id="{tab_id}" expanded="true">'
+    '<labels><label description="Summary" languagecode="1033"/></labels>'
+    f'<columns>{left_xml}{right_xml}</columns>'
+    '</tab>'
+    '</tabs>'
+    '</form>'
+)
+print(f"\nGenerated formxml length: {len(new_formxml)}")
+
+# ── 5. PATCH the dashboard ────────────────────────────────────────────────────
+if not dash_id:
+    print("\nNo dashboard to patch — run 'Create the Run Specialty Dashboard' via the agent first.")
+    sys.exit(1)
+
+print("\n" + "=" * 60)
+print("5. PATCHING DASHBOARD")
+print("=" * 60)
+try:
+    crm_patch("systemforms", dash_id, {
+        "formxml": new_formxml,
+        "name": DASHBOARD_NAME,
+        "formactivationstate": 1,
+    })
+    print(f"  ✓ PATCH succeeded for {dash_id}")
+except Exception as e:
+    print(f"  ✗ PATCH failed: {e}")
+    sys.exit(1)
+
+# ── 6. Verify stored formxml ──────────────────────────────────────────────────
+print("\n" + "=" * 60)
+print("6. VERIFYING STORED FORMXML")
+print("=" * 60)
+v_r = crm_get("systemforms", {
+    "$filter": f"formid eq {dash_id}",
+    "$select": "formxml,name,formactivationstate",
+    "$top": 1,
+})
+stored = v_r.get("value", [{}])[0]
+stored_xml = stored.get("formxml", "")
+viz_ids = re.findall(r'<VisualizationId>\{([^}]+)\}</VisualizationId>', stored_xml)
+view_ids_stored = re.findall(r'<ViewId>\{([^}]+)\}</ViewId>', stored_xml)
+labels = [l for l in re.findall(r'description="([^"]*)"', stored_xml) if l and l != "Summary"]
+print(f"  Name: {stored.get('name')}")
+print(f"  Active: {stored.get('formactivationstate')}")
+print(f"  Stored formxml length: {len(stored_xml)}")
+print(f"  ViewIds stored:          {view_ids_stored}")
+print(f"  VisualizationIds stored: {viz_ids}")
+print(f"  Labels: {labels[:10]}")
+
+# ── 7. Publish ────────────────────────────────────────────────────────────────
+print("\n" + "=" * 60)
+print("7. PUBLISHING")
+print("=" * 60)
+try:
+    publish_xml = (
+        "<importexportxml>"
+        "<dashboards>"
+        f"<dashboard>{dash_id}</dashboard>"
+        "</dashboards>"
+        "</importexportxml>"
+    )
+    crm_action("PublishXml", {"ParameterXml": publish_xml})
+    print("  ✓ PublishXml targeted")
+except Exception as e:
+    print(f"  ~ Targeted publish failed ({e}), trying PublishAllXml...")
+    try:
+        crm_action("PublishAllXml", {})
+        print("  ✓ PublishAllXml")
+    except Exception as e2:
+        print(f"  ✗ Failed: {e2}")
+
+print(f"""
+Done.
+Dashboard ID: {dash_id}
+URL to verify in browser (replace ORG with your org name):
+  https://[ORG].crm.dynamics.com/main.aspx?pagetype=dashboard&id={dash_id}
+
+After refreshing CRM, confirm you see ONE Run Specialty Dashboard.
+""")
