@@ -94,6 +94,69 @@ view3_id = get_view_id("Run Specialty Accounts")
 view4_id = get_view_id("Run Specialty Leads 2026")
 view5_id = get_view_id("Run Specialty Accounts 2026")
 
+# ── 2b. Look up Dillon Fletcher's user ID and update all views ────────────────
+print("\n" + "=" * 60)
+print("2b. FILTERING OUT DILLON FLETCHER")
+print("=" * 60)
+
+dillon_id = None
+df_r = crm_get("systemusers", {
+    "$filter": "internalemailaddress eq 'dfletcher@tyr.com'",
+    "$select": "systemuserid,fullname",
+    "$top": 1,
+})
+df_rows = df_r.get("value", [])
+if df_rows:
+    dillon_id = df_rows[0]["systemuserid"]
+    print(f"  ✓ Found: {df_rows[0]['fullname']} | {dillon_id}")
+else:
+    print("  ✗ dfletcher@tyr.com not found — filter will not be applied")
+
+def add_owner_exclusion(fetchxml, exclude_userid):
+    """Insert <condition attribute='ownerid' operator='ne' value='...'/>
+    into every top-level <filter> block in the fetchxml."""
+    condition = f'<condition attribute="ownerid" operator="ne" value="{{{exclude_userid}}}"/>'
+    # Insert into the first <filter type="and"> that directly belongs to the root entity
+    # (not inside a link-entity)
+    return re.sub(
+        r'(<filter type="and">)',
+        r'\1' + condition,
+        fetchxml,
+        count=1,
+    )
+
+# Fetch and update each view's fetchxml
+def update_view_filter(view_id, exclude_userid):
+    if not view_id or not exclude_userid:
+        return
+    r = crm_get("savedqueries", {
+        "$filter": f"savedqueryid eq {view_id}",
+        "$select": "savedqueryid,name,fetchxml",
+        "$top": 1,
+    })
+    rows = r.get("value", [])
+    if not rows:
+        print(f"  ✗ View {view_id} not found")
+        return
+    v = rows[0]
+    old_fetch = v.get("fetchxml", "")
+    # Don't add the filter if it's already there
+    if exclude_userid in old_fetch:
+        print(f"  ~ {v['name']}: filter already applied")
+        return
+    new_fetch = add_owner_exclusion(old_fetch, exclude_userid)
+    try:
+        crm_patch("savedqueries", view_id, {"fetchxml": new_fetch})
+        print(f"  ✓ {v['name']}: owner exclusion added")
+    except Exception as e:
+        print(f"  ✗ {v['name']}: patch failed — {e}")
+
+if dillon_id:
+    update_view_filter(view1_id, dillon_id)   # Run Specialty Leads (shared with view2)
+    update_view_filter(view3_id, dillon_id)   # Run Specialty Accounts
+    update_view_filter(view4_id, dillon_id)   # Run Specialty Leads 2026
+    update_view_filter(view5_id, dillon_id)   # Run Specialty Accounts 2026
+
 # ── 3. Hardcoded chart IDs (confirmed from previous run) ─────────────────────
 print("\n" + "=" * 60)
 print("3. CHART IDs (hardcoded from confirmed CRM values)")
@@ -122,7 +185,7 @@ def make_cell(ctrl_idx, entity, view_id, chart_id, label):
     cell_id = "{" + str(uuid.uuid4()) + "}"
     ctrl_uid = "{" + str(uuid.uuid4()) + "}"
     return (
-        f'<cell colspan="1" rowspan="9" showlabel="true" id="{cell_id}" auto="false">'
+        f'<cell colspan="1" rowspan="12" showlabel="true" id="{cell_id}" auto="false">'
         f'<labels><label description="{safe_label}" languagecode="1033"/></labels>'
         f'<control id="RS_{ctrl_idx}" uniqueid="{ctrl_uid}"'
         f' classid="{{E7A81278-8635-4d9e-8D4D-59480B391C5B}}" isrequired="false">'
@@ -150,7 +213,7 @@ def make_col(comps, sec_name):
             print(f"  SKIPPING '{label}' — no view ID")
             continue
         rows_xml += f"<row>{make_cell(ctrl_idx, entity, view_id, chart_id, label)}</row>"
-        rows_xml += "<row/>" * 8  # 8 continuation rows for rowspan=9
+        rows_xml += "<row/>" * 11  # 11 continuation rows for rowspan=12
         print(f"  + {label}")
     return (
         f'<column width="50%"><sections>'
@@ -163,13 +226,13 @@ def make_col(comps, sec_name):
 
 tab_id = "{" + str(uuid.uuid4()) + "}"
 left_comps = [
-    (0, "lead",    view1_id, chart1_id, "Leads by Owner"),
+    (0, "lead",    view1_id, chart1_id, "Run Specialty Leads by Owner"),
     (1, "lead",    view2_id, chart2_id, "Leads by Status"),
     (2, "account", view3_id, chart3_id, "Accounts by Owner"),
 ]
 right_comps = [
-    (3, "lead",    view4_id, chart4_id, "Leads Created by Owner by Month (2026)"),
-    (4, "account", view5_id, chart5_id, "Accounts Created by Month (2026)"),
+    (3, "lead",    view4_id, chart4_id, "Leads Created by Month"),
+    (4, "account", view5_id, chart5_id, "Accounts Created by Month"),
 ]
 
 print("Left column:")
