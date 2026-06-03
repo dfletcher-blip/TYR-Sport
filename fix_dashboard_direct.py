@@ -66,11 +66,43 @@ def get_chart_id(entity, preferred_name):
     print(f"  ✗ No chart found for {entity}")
     return ""
 
+# First print ALL available charts so we know what exists in this CRM
+print("\nAll available lead charts:")
+all_lead = crm_get("savedqueryvisualizations", {
+    "$filter": "primaryentitytypecode eq 'lead'",
+    "$select": "savedqueryvisualizationid,name", "$top": 50,
+})
+for c in all_lead.get("value", []):
+    print(f"  {c['name']} | {c['savedqueryvisualizationid']}")
+
+print("\nAll available account charts:")
+all_acct = crm_get("savedqueryvisualizations", {
+    "$filter": "primaryentitytypecode eq 'account'",
+    "$select": "savedqueryvisualizationid,name", "$top": 50,
+})
+for c in all_acct.get("value", []):
+    print(f"  {c['name']} | {c['savedqueryvisualizationid']}")
+
+# Use exact names — no fallback to wrong charts
+def get_chart_id(entity, preferred_name):
+    r = crm_get("savedqueryvisualizations", {
+        "$filter": f"primaryentitytypecode eq '{entity}' and name eq '{preferred_name}'",
+        "$select": "savedqueryvisualizationid,name", "$top": 1,
+    })
+    rows = r.get("value", [])
+    if rows:
+        print(f"  ✓ chart '{rows[0]['name']}' → {rows[0]['savedqueryvisualizationid']}")
+        return rows[0]["savedqueryvisualizationid"]
+    print(f"  ~ no chart named '{preferred_name}' — will show as list view")
+    return ""
+
+print("\nResolving charts for dashboard...")
 chart1_id = get_chart_id("lead",    "Leads by Owner")
 chart2_id = get_chart_id("lead",    "Leads by Status")
 chart3_id = get_chart_id("account", "Accounts by Owner")
-chart4_id = get_chart_id("lead",    "Leads by Source")
-chart5_id = get_chart_id("account", "Accounts by Industry")
+# Monthly breakdown charts don't exist as system charts — these will render as list views
+chart4_id = get_chart_id("lead",    "Leads by Owner")   # best available for leads 2026
+chart5_id = get_chart_id("account", "Accounts by Owner")  # best available for accounts 2026
 
 # ── Step 3: Fetch an existing working system dashboard as structure template ───
 print("\nFetching source dashboard template...")

@@ -268,22 +268,29 @@ def _get_view_id(entity: str, view_name: str) -> str:
 
 
 def _get_chart_id(entity: str, chart_name: str) -> str:
-    """Look up a saved query visualization (chart) ID by entity and name."""
+    """
+    Look up a system chart (savedqueryvisualization) by entity and exact name.
+    Returns empty string if not found — callers should handle empty as grid mode.
+    No fallback to random charts; a wrong chart is worse than a grid view.
+    """
     result = crm_get("savedqueryvisualizations", {
         "$filter": f"primaryentitytypecode eq '{entity}' and name eq '{chart_name}'",
         "$select": "savedqueryvisualizationid,name",
         "$top": 1,
     })
     rows = result.get("value", [])
-    if not rows:
-        # Fallback: get any chart for this entity
-        result2 = crm_get("savedqueryvisualizations", {
-            "$filter": f"primaryentitytypecode eq '{entity}'",
-            "$select": "savedqueryvisualizationid,name",
-            "$top": 1,
-        })
-        rows = result2.get("value", [])
     return rows[0]["savedqueryvisualizationid"] if rows else ""
+
+
+def _list_charts(entity: str) -> list:
+    """Return all system chart names for an entity (for debugging/discovery)."""
+    result = crm_get("savedqueryvisualizations", {
+        "$filter": f"primaryentitytypecode eq '{entity}'",
+        "$select": "savedqueryvisualizationid,name",
+        "$top": 50,
+    })
+    return [{"id": r["savedqueryvisualizationid"], "name": r["name"]}
+            for r in result.get("value", [])]
 
 
 def _build_component_xml(i: int, comp: dict) -> str:
