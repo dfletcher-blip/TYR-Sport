@@ -234,7 +234,7 @@ def make_cell(ctrl_idx, entity, view_id, chart_id, label):
     cell_id = "{" + str(uuid.uuid4()) + "}"
     ctrl_uid = "{" + str(uuid.uuid4()) + "}"
     return (
-        f'<cell colspan="1" rowspan="12" showlabel="true" id="{cell_id}" auto="false">'
+        f'<cell colspan="1" rowspan="6" showlabel="true" id="{cell_id}" auto="false">'
         f'<labels><label description="{safe_label}" languagecode="1033"/></labels>'
         f'<control id="RS_{ctrl_idx}" uniqueid="{ctrl_uid}"'
         f' classid="{{E7A81278-8635-4d9e-8D4D-59480B391C5B}}" isrequired="false">'
@@ -262,7 +262,7 @@ def make_col(comps, sec_name):
             print(f"  SKIPPING '{label}' — no view ID")
             continue
         rows_xml += f"<row>{make_cell(ctrl_idx, entity, view_id, chart_id, label)}</row>"
-        rows_xml += "<row/>" * 11  # 11 continuation rows for rowspan=12
+        rows_xml += "<row/>" * 5  # 5 continuation rows for rowspan=6
         print(f"  + {label}")
     return (
         f'<column width="50%"><sections>'
