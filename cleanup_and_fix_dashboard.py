@@ -278,9 +278,9 @@ def make_col(comps, sec_name):
 tab_id = "{" + str(uuid.uuid4()) + "}"
 # Single column — all charts at 100% width so nothing clips horizontally
 all_comps = [
-    (0, "lead",    view1_id, chart1_id, "Run Specialty Leads by Owner", 6),
-    (1, "lead",    view2_id, chart2_id, "Leads by Status", 6),
-    (2, "account", view3_id, chart3_id, "Accounts by Owner", 6),
+    (0, "lead",    view1_id, chart1_id, "Run Specialty Leads by Owner", 10),
+    (1, "lead",    view2_id, chart2_id, "Leads by Status", 8),
+    (2, "account", view3_id, chart3_id, "Accounts by Owner", 12),
     (3, "lead",    view4_id, chart4_id, "Leads Created by Month", 8),
     (4, "account", view5_id, chart5_id, "Accounts Created by Month", 8),
 ]
