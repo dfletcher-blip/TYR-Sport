@@ -276,29 +276,45 @@ def make_col(comps, sec_name):
     )
 
 tab_id = "{" + str(uuid.uuid4()) + "}"
-# Left: 3 owner/status charts, each rowspan=6
-left_comps = [
+# Single column — all charts at 100% width so nothing clips horizontally
+all_comps = [
     (0, "lead",    view1_id, chart1_id, "Run Specialty Leads by Owner", 6),
     (1, "lead",    view2_id, chart2_id, "Leads by Status", 6),
     (2, "account", view3_id, chart3_id, "Accounts by Owner", 6),
-]
-# Right: 2 monthly charts — taller (rowspan=9) so bars have room horizontally
-right_comps = [
-    (3, "lead",    view4_id, chart4_id, "Leads Created by Month", 9),
-    (4, "account", view5_id, chart5_id, "Accounts Created by Month", 9),
+    (3, "lead",    view4_id, chart4_id, "Leads Created by Month", 8),
+    (4, "account", view5_id, chart5_id, "Accounts Created by Month", 8),
 ]
 
-print("Left column:")
-left_xml = make_col(left_comps, "section_left")
-print("Right column:")
-right_xml = make_col(right_comps, "section_right")
+def make_col_single(comps, sec_name):
+    sec_id = "{" + str(uuid.uuid4()) + "}"
+    rows_xml = ""
+    for item in comps:
+        ctrl_idx, entity, view_id, chart_id, label = item[:5]
+        rowspan = item[5] if len(item) > 5 else 6
+        if not view_id:
+            print(f"  SKIPPING '{label}' — no view ID")
+            continue
+        rows_xml += f"<row>{make_cell(ctrl_idx, entity, view_id, chart_id, label, rowspan)}</row>"
+        rows_xml += "<row/>" * (rowspan - 1)
+        print(f"  + {label} (rowspan={rowspan})")
+    return (
+        f'<column width="100%"><sections>'
+        f'<section name="{sec_name}" showlabel="false" showbar="false"'
+        f' locklevel="0" id="{sec_id}" columns="1">'
+        f'<labels><label description="" languagecode="1033"/></labels>'
+        f'<rows>{rows_xml}</rows>'
+        f'</section></sections></column>'
+    )
+
+print("Single column:")
+col_xml = make_col_single(all_comps, "section_main")
 
 new_formxml = (
     '<form>'
     '<tabs>'
     f'<tab name="tab" showlabel="false" locklevel="0" id="{tab_id}" expanded="true">'
     '<labels><label description="Summary" languagecode="1033"/></labels>'
-    f'<columns>{left_xml}{right_xml}</columns>'
+    f'<columns>{col_xml}</columns>'
     '</tab>'
     '</tabs>'
     '</form>'
