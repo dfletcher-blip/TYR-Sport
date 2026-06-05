@@ -226,7 +226,7 @@ print("\n" + "=" * 60)
 print("4. BUILDING FORMXML")
 print("=" * 60)
 
-def make_cell(ctrl_idx, entity, view_id, chart_id, label):
+def make_cell(ctrl_idx, entity, view_id, chart_id, label, rowspan=6):
     safe_label = html.escape(label)
     grid_mode = "Chart" if chart_id else "Grid"
     viz = f"<VisualizationId>{{{chart_id}}}</VisualizationId>" if chart_id else "<VisualizationId/>"
@@ -234,7 +234,7 @@ def make_cell(ctrl_idx, entity, view_id, chart_id, label):
     cell_id = "{" + str(uuid.uuid4()) + "}"
     ctrl_uid = "{" + str(uuid.uuid4()) + "}"
     return (
-        f'<cell colspan="1" rowspan="6" showlabel="true" id="{cell_id}" auto="false">'
+        f'<cell colspan="1" rowspan="{rowspan}" showlabel="true" id="{cell_id}" auto="false">'
         f'<labels><label description="{safe_label}" languagecode="1033"/></labels>'
         f'<control id="RS_{ctrl_idx}" uniqueid="{ctrl_uid}"'
         f' classid="{{E7A81278-8635-4d9e-8D4D-59480B391C5B}}" isrequired="false">'
@@ -257,13 +257,15 @@ def make_cell(ctrl_idx, entity, view_id, chart_id, label):
 def make_col(comps, sec_name):
     sec_id = "{" + str(uuid.uuid4()) + "}"
     rows_xml = ""
-    for (ctrl_idx, entity, view_id, chart_id, label) in comps:
+    for item in comps:
+        ctrl_idx, entity, view_id, chart_id, label = item[:5]
+        rowspan = item[5] if len(item) > 5 else 6
         if not view_id:
             print(f"  SKIPPING '{label}' — no view ID")
             continue
-        rows_xml += f"<row>{make_cell(ctrl_idx, entity, view_id, chart_id, label)}</row>"
-        rows_xml += "<row/>" * 5  # 5 continuation rows for rowspan=6
-        print(f"  + {label}")
+        rows_xml += f"<row>{make_cell(ctrl_idx, entity, view_id, chart_id, label, rowspan)}</row>"
+        rows_xml += "<row/>" * (rowspan - 1)
+        print(f"  + {label} (rowspan={rowspan})")
     return (
         f'<column width="50%"><sections>'
         f'<section name="{sec_name}" showlabel="false" showbar="false"'
@@ -274,14 +276,16 @@ def make_col(comps, sec_name):
     )
 
 tab_id = "{" + str(uuid.uuid4()) + "}"
+# Left: 3 owner/status charts, each rowspan=6
 left_comps = [
-    (0, "lead",    view1_id, chart1_id, "Run Specialty Leads by Owner"),
-    (1, "lead",    view2_id, chart2_id, "Leads by Status"),
-    (2, "account", view3_id, chart3_id, "Accounts by Owner"),
+    (0, "lead",    view1_id, chart1_id, "Run Specialty Leads by Owner", 6),
+    (1, "lead",    view2_id, chart2_id, "Leads by Status", 6),
+    (2, "account", view3_id, chart3_id, "Accounts by Owner", 6),
 ]
+# Right: 2 monthly charts — taller (rowspan=9) so bars have room horizontally
 right_comps = [
-    (3, "lead",    view4_id, chart4_id, "Leads Created by Month"),
-    (4, "account", view5_id, chart5_id, "Accounts Created by Month"),
+    (3, "lead",    view4_id, chart4_id, "Leads Created by Month", 9),
+    (4, "account", view5_id, chart5_id, "Accounts Created by Month", 9),
 ]
 
 print("Left column:")
