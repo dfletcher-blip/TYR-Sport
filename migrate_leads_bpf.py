@@ -95,26 +95,40 @@ for old_name, new_name in STAGE_MAP.items():
 default_new_stage = next((v for k, v in new_stages.items() if "new" in k.lower()), None)
 print(f"\n  Default stage for unmapped leads: New ({default_new_stage})\n")
 
-# --- Step 3: Get all leads on old BPF ---
-print("Step 3: Getting leads on old BPF...")
+# --- Step 3: Get all leads not yet on new BPF (old BPF or unassigned) ---
+print("Step 3: Getting leads not yet on new BPF...")
 all_leads = []
-url = f"{DYNAMICS_URL}/api/data/v9.2/leads"
-params = {
-    "$select": "leadid,fullname,stageid",
-    "$filter": f"_processid_value eq {old_bpf_id}",
-    "$top": 1000,
-}
-while url:
-    r = requests.get(url, headers=get_headers(), params=params, timeout=30)
-    data = r.json()
-    all_leads.extend(data.get("value", []))
-    url = data.get("@odata.nextLink")
-    params = None
 
-print(f"  Found {len(all_leads)} leads to migrate\n")
+def fetch_leads(filter_str):
+    results = []
+    url = f"{DYNAMICS_URL}/api/data/v9.2/leads"
+    params = {
+        "$select": "leadid,fullname,stageid,_processid_value",
+        "$filter": filter_str,
+        "$top": 1000,
+    }
+    while url:
+        r = requests.get(url, headers=get_headers(), params=params, timeout=30)
+        data = r.json()
+        results.extend(data.get("value", []))
+        url = data.get("@odata.nextLink")
+        params = None
+    return results
+
+on_old_bpf = fetch_leads(f"_processid_value eq {old_bpf_id}")
+unassigned  = fetch_leads(f"_processid_value eq null")
+
+# Deduplicate by leadid
+seen = set()
+for lead in on_old_bpf + unassigned:
+    if lead["leadid"] not in seen:
+        all_leads.append(lead)
+        seen.add(lead["leadid"])
+
+print(f"  On old BPF: {len(on_old_bpf)}, Unassigned: {len(unassigned)}, Total: {len(all_leads)}\n")
 
 if not all_leads:
-    print("No leads to migrate.")
+    print("No leads to migrate. All leads are already on the new BPF.")
     exit(0)
 
 # --- Step 4: Batch migrate via PATCH ---
