@@ -1179,11 +1179,19 @@ TOOL_DEFINITIONS = [
     {
         "name": "create_activity_date_workflows",
         "description": (
-            "Create Dynamics 365 Classic Workflows that automatically update tyr_lastactivitydate "
-            "on the regarding contact, lead, or account whenever an email, phone call, or task is "
-            "marked Completed in the CRM by a human. Run this once after setup_last_activity_date_fields. "
-            "The agent already auto-stamps the field when it sends emails — these workflows cover "
+            "Clean up broken 'Update Last Activity Date' workflows and return step-by-step "
+            "Power Automate instructions for setting up automatic Last Activity Date population. "
+            "The agent already auto-stamps the field when it sends emails — these instructions cover "
             "activities logged by users directly in the CRM UI."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "delete_broken_activity_date_workflows",
+        "description": (
+            "Find and permanently delete the broken 'Update Last Activity Date' Classic Workflows "
+            "that were created with the wrong entity (Quick Campaign) and wrong steps. "
+            "Safe to run multiple times. Use this to clean up before setting up Power Automate flows."
         ),
         "input_schema": {"type": "object", "properties": {}},
     },
