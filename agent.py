@@ -1189,9 +1189,11 @@ TOOL_DEFINITIONS = [
     {
         "name": "delete_broken_activity_date_workflows",
         "description": (
-            "Find and permanently delete the broken 'Update Last Activity Date' Classic Workflows "
-            "that were created with the wrong entity (Quick Campaign) and wrong steps. "
-            "Safe to run multiple times. Use this to clean up before setting up Power Automate flows."
+            "CALL THIS TOOL when the user asks to delete the 'Update Last Activity Date' workflows "
+            "or clean up broken activity date workflows. "
+            "This tool directly deletes all workflows whose name contains 'Update Last Activity Date' "
+            "via the Dynamics 365 API — no manual steps needed. Do NOT use deactivate_workflow or "
+            "search_workflows for this task. Just call this tool."
         ),
         "input_schema": {"type": "object", "properties": {}},
     },

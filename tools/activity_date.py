@@ -12,7 +12,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from datetime import datetime, timezone
-from config.crm_connection import crm_get, crm_patch, crm_post, crm_action
+from config.crm_connection import crm_get, crm_patch, crm_post, crm_action, crm_delete
 from tools.form_customization import create_custom_field, add_fields_to_form
 
 FIELD_LOGICAL_NAME = "tyr_lastactivitydate"
@@ -343,7 +343,6 @@ def delete_broken_activity_date_workflows() -> dict:
                     })
                 except Exception:
                     pass
-                from config.crm_connection import crm_delete
                 crm_delete("workflows", wf_id)
                 deleted.append({"name": name, "id": wf_id})
 
