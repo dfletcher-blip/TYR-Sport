@@ -115,20 +115,27 @@ def fetch_leads(filter_str):
         params = None
     return results
 
-on_old_bpf = fetch_leads(f"_processid_value eq {old_bpf_id}")
-unassigned  = fetch_leads(f"_processid_value eq null")
+on_old_bpf   = fetch_leads(f"_processid_value eq {old_bpf_id}")
+unassigned   = fetch_leads(f"_processid_value eq null")
+on_new_bpf   = fetch_leads(f"_processid_value eq {new_bpf_id}")
 
-# Deduplicate by leadid
+# Leads on new BPF but still carrying an old stage ID need their stage fixed
+old_stage_ids = set(old_stages.values())
+wrong_stage = [l for l in on_new_bpf
+               if (l.get("_stageid_value") or l.get("stageid")) in old_stage_ids]
+
+# Deduplicate by leadid across all buckets
 seen = set()
-for lead in on_old_bpf + unassigned:
+for lead in on_old_bpf + unassigned + wrong_stage:
     if lead["leadid"] not in seen:
         all_leads.append(lead)
         seen.add(lead["leadid"])
 
-print(f"  On old BPF: {len(on_old_bpf)}, Unassigned: {len(unassigned)}, Total: {len(all_leads)}\n")
+print(f"  On old BPF: {len(on_old_bpf)}, Unassigned: {len(unassigned)}, "
+      f"On new BPF w/ wrong stage: {len(wrong_stage)}, Total: {len(all_leads)}\n")
 
 if not all_leads:
-    print("No leads to migrate. All leads are already on the new BPF.")
+    print("No leads to migrate. All leads are already on the new BPF with correct stages.")
     exit(0)
 
 # --- Step 4: Batch migrate via PATCH ---
