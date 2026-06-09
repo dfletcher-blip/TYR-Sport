@@ -120,6 +120,12 @@ from tools.form_customization import (
     add_fields_to_form,
     create_custom_field,
 )
+from tools.activity_date import (
+    setup_last_activity_date_fields,
+    update_last_activity_date,
+    sync_last_activity_dates,
+    get_last_activity_date_status,
+)
 
 
 # ============================================================
@@ -149,6 +155,7 @@ YOUR CAPABILITIES:
 11. EMAIL — Send emails to contacts or leads, send bulk emails, view email history
 12. SPECIAL TERMS (STR) — Search STR records, check pending approvals, find expiring agreements, view by account, manage approval workflows
 13. FORM CUSTOMIZATION — Add fields to entity forms, create custom fields (including dropdowns), inspect form layouts, publish changes
+15. LAST ACTIVITY DATE — Create and maintain tyr_lastactivitydate on lead, contact, and account records; sync from activity history; report on field population
 14. MEMORY — Read and update persistent CRM memory to remember field names, entity names, and CRM-specific facts across sessions
 
 HOW YOU WORK:
@@ -243,6 +250,12 @@ TOOL_REGISTRY = {
     "get_special_terms_summary":      get_special_terms_summary,
     "get_str_workflows":              get_str_workflows,
     "update_special_terms":           update_special_terms,
+
+    # Activity date tools
+    "setup_last_activity_date_fields":  setup_last_activity_date_fields,
+    "update_last_activity_date":        update_last_activity_date,
+    "sync_last_activity_dates":         sync_last_activity_dates,
+    "get_last_activity_date_status":    get_last_activity_date_status,
 
     # Form customization tools
     "get_entity_form":                get_entity_form,
@@ -1091,6 +1104,70 @@ TOOL_DEFINITIONS = [
                 "lead_id": {"type": "string", "description": "Lead GUID (provide this or contact_id)"},
                 "limit": {"type": "integer", "description": "Max emails to return (default 20)"},
             },
+        },
+    },
+    # ── Last Activity Date ─────────────────────────────────────
+    {
+        "name": "setup_last_activity_date_fields",
+        "description": (
+            "Create the tyr_lastactivitydate (Date) custom field on lead, contact, and account, "
+            "then add it to each entity's main form. Run this once to set up the field. "
+            "After setup, use sync_last_activity_dates to populate historical data."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "add_to_form": {
+                    "type": "boolean",
+                    "description": "If true (default), adds the field to each entity's main form so users can see it in the CRM UI.",
+                },
+            },
+        },
+    },
+    {
+        "name": "update_last_activity_date",
+        "description": (
+            "Find the most recent completed activity linked to a single record and write its date "
+            "into the tyr_lastactivitydate field. Use this to refresh one record after a new activity."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "enum": ["lead", "contact", "account"], "description": "The entity type of the record"},
+                "record_id": {"type": "string", "description": "The GUID of the record to update"},
+            },
+            "required": ["entity", "record_id"],
+        },
+    },
+    {
+        "name": "sync_last_activity_dates",
+        "description": (
+            "Backfill tyr_lastactivitydate for all active records of an entity by looking up each "
+            "record's linked activities. Use preview_only=True first to confirm scope."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "enum": ["lead", "contact", "account"], "description": "Entity to sync"},
+                "limit": {"type": "integer", "description": "Max records to process (default 200)"},
+                "preview_only": {"type": "boolean", "description": "If true, show what would be updated without writing (default false)"},
+            },
+            "required": ["entity"],
+        },
+    },
+    {
+        "name": "get_last_activity_date_status",
+        "description": (
+            "Report on how many lead, contact, or account records have tyr_lastactivitydate populated "
+            "vs blank. Shows fill rate and lists records with no date so you know what needs syncing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "enum": ["lead", "contact", "account"], "description": "Entity to inspect"},
+                "limit": {"type": "integer", "description": "Max records to inspect (default 50)"},
+            },
+            "required": ["entity"],
         },
     },
 ]
