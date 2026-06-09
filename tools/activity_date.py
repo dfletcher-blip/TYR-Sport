@@ -154,7 +154,7 @@ def update_last_activity_date(entity: str, record_id: str) -> dict:
     # Write the date to the record
     try:
         collection = meta["collection"]
-        crm_patch(f"{collection}({record_id})", {FIELD_LOGICAL_NAME: date_only})
+        crm_patch(collection, record_id, {FIELD_LOGICAL_NAME: date_only})
     except Exception as e:
         return {"error": f"Could not update record: {e}", "entity": entity, "record_id": record_id}
 
@@ -300,216 +300,140 @@ def get_last_activity_date_status(entity: str, limit: int = 50) -> dict:
     }
 
 
-def create_activity_date_workflows() -> dict:
+def delete_broken_activity_date_workflows() -> dict:
     """
-    Create Dynamics 365 Classic Workflows that automatically update
-    tyr_lastactivitydate on the regarding contact, lead, or account
-    whenever an email, phone call, or task is marked as completed in the CRM.
-
-    This covers activities logged by humans in the CRM UI — the agent already
-    auto-stamps the field when it sends emails itself.
-
-    Creates 3 workflows (one per activity type). Each runs asynchronously,
-    triggers on record status change to Completed, and patches the regarding
-    record's tyr_lastactivitydate to today's date.
+    Find and delete the broken 'Update Last Activity Date' Classic Workflows
+    that were created with the wrong entity (Quick Campaign) and wrong steps.
+    Safe to run multiple times.
     """
-    from datetime import date
-
-    activity_configs = [
-        {
-            "entity": "email",
-            "display": "Email",
-            "trigger_attr": "statecode",
-            "name": "TYR - Update Last Activity Date on Email Completed",
-        },
-        {
-            "entity": "phonecall",
-            "display": "Phone Call",
-            "trigger_attr": "statecode",
-            "name": "TYR - Update Last Activity Date on Phone Call Completed",
-        },
-        {
-            "entity": "task",
-            "display": "Task",
-            "trigger_attr": "statecode",
-            "name": "TYR - Update Last Activity Date on Task Completed",
-        },
+    broken_names = [
+        "Update Last Activity Date – Email",
+        "Update Last Activity Date – Phone Call",
+        "Update Last Activity Date – Task",
+        "Update Last Activity Date – Appointment",
+        "TYR - Update Last Activity Date on Email Completed",
+        "TYR - Update Last Activity Date on Phone Call Completed",
+        "TYR - Update Last Activity Date on Task Completed",
     ]
 
-    created = []
-    skipped = []
+    deleted = []
+    not_found = []
     errors = []
 
-    for cfg in activity_configs:
-        # Build the XAML for a workflow that reads regardingobjectid and
-        # patches tyr_lastactivitydate on the regarding record.
-        # This uses the D365 Classic Workflow (WF4) format.
-        xaml = f"""<Activity x:Class="TYR.UpdateLastActivityDate_{cfg['entity']}"
-  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
-  xmlns:mxswa="clr-namespace:Microsoft.Xrm.Sdk.Workflow.Activities;assembly=Microsoft.Xrm.Sdk.Workflow, Version=9.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35"
-  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-  xmlns:crm="clr-namespace:Microsoft.Xrm.Sdk;assembly=Microsoft.Xrm.Sdk, Version=9.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35"
-  xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
-  xmlns:this="clr-namespace:TYR">
-  <mxswa:Workflow>
-    <Sequence DisplayName="Update Last Activity Date on Regarding Record">
-      <Sequence.Variables>
-        <Variable x:TypeArguments="crm:EntityReference" Name="RegardingRef" />
-        <Variable x:TypeArguments="x:DateTime" Name="TodayDate" />
-      </Sequence.Variables>
-      <mxswa:ActivityReference
-        AssemblyQualifiedName="Microsoft.Crm.Workflow.Activities.EvaluateExpression, Microsoft.Crm.Workflow, Version=9.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35"
-        DisplayName="Get Today">
-        <mxswa:ActivityReference.Properties>
-          <Property Name="ExpressionOperator" Value="SelectFirstNonNull" />
-          <Property Name="Parameters">
-            <scg:Dictionary x:TypeArguments="x:String, mxswa:MxExpression">
-              <mxswa:MxExpression x:Key="P0">
-                <mxswa:MxExpression.Arguments>
-                  <InArgument x:TypeArguments="x:DateTime">
-                    <mxswa:ActivityReference
-                      AssemblyQualifiedName="Microsoft.Crm.Workflow.Activities.GetContextProperty, Microsoft.Crm.Workflow, Version=9.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35"
-                      DisplayName="ExecutionTime">
-                      <mxswa:ActivityReference.Properties>
-                        <Property Name="PropertyName" Value="ExecutionTime" />
-                        <Property Name="OdataType" Value="Edm.DateTimeOffset" />
-                        <Property Name="Result">
-                          <OutArgument x:TypeArguments="x:DateTime">
-                            <Variable x:TypeArguments="x:DateTime" Name="TodayDate" />
-                          </OutArgument>
-                        </Property>
-                      </mxswa:ActivityReference.Properties>
-                    </mxswa:ActivityReference>
-                  </InArgument>
-                </mxswa:MxExpression.Arguments>
-              </mxswa:MxExpression>
-            </scg:Dictionary>
-          </Property>
-          <Property Name="ReturnType" Value="{{x:Type x:DateTime}}" />
-          <Property Name="Result">
-            <OutArgument x:TypeArguments="x:DateTime">
-              <Variable x:TypeArguments="x:DateTime" Name="TodayDate" />
-            </OutArgument>
-          </Property>
-        </mxswa:ActivityReference.Properties>
-      </mxswa:ActivityReference>
-      <mxswa:ActivityReference
-        AssemblyQualifiedName="Microsoft.Crm.Workflow.Activities.GetEntityProperty, Microsoft.Crm.Workflow, Version=9.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35"
-        DisplayName="Get Regarding">
-        <mxswa:ActivityReference.Properties>
-          <Property Name="Attribute" Value="regardingobjectid" />
-          <Property Name="Entity">
-            <InArgument x:TypeArguments="crm:Entity">
-              <mxswa:ActivityReference
-                AssemblyQualifiedName="Microsoft.Crm.Workflow.Activities.GetWorkflowEntity, Microsoft.Crm.Workflow, Version=9.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35"
-                DisplayName="Get Primary Entity">
-              </mxswa:ActivityReference>
-            </InArgument>
-          </Property>
-          <Property Name="Result">
-            <OutArgument x:TypeArguments="crm:EntityReference">
-              <Variable x:TypeArguments="crm:EntityReference" Name="RegardingRef" />
-            </OutArgument>
-          </Property>
-        </mxswa:ActivityReference.Properties>
-      </mxswa:ActivityReference>
-      <mxswa:ActivityReference
-        AssemblyQualifiedName="Microsoft.Crm.Workflow.Activities.SetEntityProperty, Microsoft.Crm.Workflow, Version=9.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35"
-        DisplayName="Set Last Activity Date">
-        <mxswa:ActivityReference.Properties>
-          <Property Name="Attribute" Value="{FIELD_LOGICAL_NAME}" />
-          <Property Name="Entity">
-            <InArgument x:TypeArguments="crm:Entity">
-              <mxswa:ActivityReference
-                AssemblyQualifiedName="Microsoft.Crm.Workflow.Activities.GetWorkflowEntity, Microsoft.Crm.Workflow, Version=9.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35"
-                DisplayName="Get Regarding Entity">
-                <mxswa:ActivityReference.Properties>
-                  <Property Name="EntityReference">
-                    <InArgument x:TypeArguments="crm:EntityReference">
-                      <Variable x:TypeArguments="crm:EntityReference" Name="RegardingRef" />
-                    </InArgument>
-                  </Property>
-                </mxswa:ActivityReference.Properties>
-              </mxswa:ActivityReference>
-            </InArgument>
-          </Property>
-          <Property Name="Value">
-            <InArgument x:TypeArguments="x:Object">
-              <Variable x:TypeArguments="x:DateTime" Name="TodayDate" />
-            </InArgument>
-          </Property>
-        </mxswa:ActivityReference.Properties>
-      </mxswa:ActivityReference>
-    </Sequence>
-  </mxswa:Workflow>
-</Activity>"""
-
-        workflow_payload = {
-            "name": cfg["name"],
-            "primaryentity": cfg["entity"],
-            "category": 0,          # Classic Workflow
-            "type": 1,              # Definition
-            "mode": 1,              # Asynchronous (background)
-            "scope": 4,             # Organization scope
-            "triggeroncreate": False,
-            "triggeronupdateattributelist": cfg["trigger_attr"],
-            "triggeronstatuschange": True,
-            "isontdemand": False,
-            "xaml": xaml,
-        }
-
+    for name in broken_names:
         try:
-            # Check if a workflow with this name already exists
             existing = crm_get("workflows", {
                 "$select": "workflowid,name,statecode",
-                "$filter": f"name eq '{cfg['name']}'",
-                "$top": 1,
+                "$filter": f"name eq '{name}'",
+                "$top": 5,
             }).get("value", [])
 
-            if existing:
-                skipped.append({
-                    "name": cfg["name"],
-                    "id": existing[0]["workflowid"],
-                    "reason": "Already exists",
-                })
+            if not existing:
+                not_found.append(name)
                 continue
 
-            result = crm_post("workflows", workflow_payload)
-            workflow_id = result.get("workflowid") or result.get("@odata.id", "")
-
-            # Activate the workflow
-            if workflow_id:
+            for wf in existing:
+                wf_id = wf["workflowid"]
+                # Deactivate first (required before delete)
                 try:
                     crm_action("SetState", {
-                        "EntityMoniker": {"@odata.type": "Microsoft.Dynamics.CRM.workflow", "workflowid": workflow_id},
-                        "State": {"Value": 1},   # Active
-                        "Status": {"Value": 2},  # Active
+                        "EntityMoniker": {"@odata.type": "Microsoft.Dynamics.CRM.workflow", "workflowid": wf_id},
+                        "State": {"Value": 0},
+                        "Status": {"Value": 1},
                     })
-                    activated = True
-                except Exception as act_err:
-                    activated = False
-
-            created.append({
-                "name": cfg["name"],
-                "entity": cfg["entity"],
-                "id": workflow_id,
-                "activated": activated if workflow_id else False,
-            })
+                except Exception:
+                    pass
+                from config.crm_connection import crm_delete
+                crm_delete("workflows", wf_id)
+                deleted.append({"name": name, "id": wf_id})
 
         except Exception as e:
-            errors.append({"name": cfg["name"], "entity": cfg["entity"], "error": str(e)})
+            errors.append({"name": name, "error": str(e)})
 
     return {
         "success": True,
-        "workflows_created": len(created),
-        "workflows_skipped": len(skipped),
-        "workflows_failed": len(errors),
-        "created": created,
-        "skipped": skipped,
-        "errors": errors,
+        "deleted": len(deleted),
+        "not_found": len(not_found),
+        "errors": len(errors),
+        "deleted_details": deleted,
+        "error_details": errors,
         "message": (
-            f"Created {len(created)} workflow(s), {len(skipped)} already existed, {len(errors)} failed. "
-            "Active workflows will fire automatically when an email, phone call, or task is marked Completed "
-            "and update tyr_lastactivitydate on the linked contact, lead, or account."
+            f"Deleted {len(deleted)} broken workflow(s). "
+            + ("Errors on some: " + str(errors) if errors else "")
+        ),
+    }
+
+
+def create_activity_date_workflows() -> dict:
+    """
+    Clean up broken workflows and return step-by-step Power Automate instructions
+    for setting up automatic Last Activity Date population. Also reports on what
+    the agent already handles automatically (email sends).
+
+    The D365 Classic Workflow API cannot reliably create 'update regarding record'
+    workflows via XAML injection. Power Automate (make.powerautomate.com) handles
+    this correctly and is the recommended approach.
+    """
+    # Clean up any broken workflows first
+    cleanup = delete_broken_activity_date_workflows()
+
+    instructions = {
+        "what_agent_already_does": (
+            "The agent automatically stamps tyr_lastactivitydate whenever it sends an email "
+            "to a contact or lead through the CRM. No setup needed for agent-sent emails."
+        ),
+        "for_human_logged_activities": (
+            "Create 3 Power Automate flows at make.powerautomate.com — one for each entity. "
+            "Each flow watches for completed activities and updates tyr_lastactivitydate."
+        ),
+        "flow_1_contacts": {
+            "name": "TYR - Last Activity Date - Contact",
+            "steps": [
+                "Go to make.powerautomate.com and click Create > Automated cloud flow",
+                "Name it: TYR - Last Activity Date - Contact",
+                "Search for trigger: 'When a row is added, modified or deleted' (Dataverse)",
+                "Set Change type = Modified, Table = Activities (not a specific type — all activities)",
+                "Set Filter rows = statecode eq 1",
+                "Click Next / Create",
+                "Add action: 'Update a row' (Dataverse)",
+                "Set Table = Contacts",
+                "Set Row ID = regardingobjectid (pick from dynamic content)",
+                "Set tyr_lastactivitydate = utcNow() expression",
+                "Save and turn on the flow",
+            ],
+        },
+        "flow_2_leads": {
+            "name": "TYR - Last Activity Date - Lead",
+            "steps": [
+                "Repeat the same steps as flow 1",
+                "Change Table in 'Update a row' to Leads",
+                "All other settings are the same",
+            ],
+        },
+        "flow_3_accounts": {
+            "name": "TYR - Last Activity Date - Account",
+            "steps": [
+                "Repeat the same steps as flow 1",
+                "Change Table in 'Update a row' to Accounts",
+                "All other settings are the same",
+            ],
+        },
+        "note": (
+            "Power Automate is free with your Dynamics 365 license. "
+            "You can also use sync_last_activity_dates to backfill any records that were missed."
+        ),
+    }
+
+    return {
+        "success": True,
+        "broken_workflows_deleted": cleanup.get("deleted", 0),
+        "what_agent_does_automatically": instructions["what_agent_already_does"],
+        "next_step": "Create 3 Power Automate flows at make.powerautomate.com using the instructions below.",
+        "power_automate_instructions": instructions,
+        "message": (
+            f"Deleted {cleanup.get('deleted', 0)} broken workflow(s). "
+            "The agent now auto-stamps tyr_lastactivitydate when it sends emails. "
+            "For activities logged by humans, create the 3 Power Automate flows described above. "
+            "Use sync_last_activity_dates to backfill historical data any time."
         ),
     }

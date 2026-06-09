@@ -132,6 +132,10 @@ def main():
 
     print("\n✓ Ready! Enter your request below.\n")
 
+    # Session history — maintained across all requests in this session so
+    # the agent remembers what it said earlier in the conversation.
+    session_messages = []
+
     # Step 3: Interactive loop — keep asking for requests
     while True:
         try:
@@ -160,9 +164,9 @@ def main():
             request = user_input[8:].strip()
             print("\n  [DRY RUN MODE — no changes will be made]\n")
 
-        # Run the agent
+        # Run the agent — pass and receive session history so it remembers
         try:
-            response = run_agent(request, dry_run=dry_run)
+            response, session_messages = run_agent(request, dry_run=dry_run, session_messages=session_messages)
             print(f"\n{'═' * 60}")
             print(f"Agent:\n{response}")
             print(f"{'═' * 60}\n")

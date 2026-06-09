@@ -16,7 +16,7 @@ _LAST_ACTIVITY_FIELD = "tyr_lastactivitydate"
 def _stamp_last_activity(entity_collection: str, record_id: str):
     """Silently update tyr_lastactivitydate on a record. Swallows errors so it never blocks sends."""
     try:
-        crm_patch(f"{entity_collection}({record_id})", {_LAST_ACTIVITY_FIELD: date.today().isoformat()})
+        crm_patch(entity_collection, record_id, {_LAST_ACTIVITY_FIELD: date.today().isoformat()})
     except Exception:
         pass
 

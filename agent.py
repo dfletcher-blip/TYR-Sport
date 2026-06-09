@@ -126,6 +126,7 @@ from tools.activity_date import (
     sync_last_activity_dates,
     get_last_activity_date_status,
     create_activity_date_workflows,
+    delete_broken_activity_date_workflows,
 )
 
 
@@ -259,7 +260,8 @@ TOOL_REGISTRY = {
     "update_last_activity_date":        update_last_activity_date,
     "sync_last_activity_dates":         sync_last_activity_dates,
     "get_last_activity_date_status":    get_last_activity_date_status,
-    "create_activity_date_workflows":   create_activity_date_workflows,
+    "create_activity_date_workflows":        create_activity_date_workflows,
+    "delete_broken_activity_date_workflows": delete_broken_activity_date_workflows,
 
     # Form customization tools
     "get_entity_form":                get_entity_form,
@@ -1188,15 +1190,16 @@ TOOL_DEFINITIONS = [
 ]
 
 
-def run_agent(user_request: str, dry_run: bool = False) -> str:
+def run_agent(user_request: str, dry_run: bool = False, session_messages: list = None) -> tuple:
     """
     Run the CRM agent with a plain English request.
 
     user_request: what you want the agent to do (plain English)
     dry_run: if True, Claude will plan actions but NOT execute writes
-             Use this to preview what the agent would do before committing.
+    session_messages: pass the list returned by a previous call to maintain
+                      conversation history within the same session
 
-    Returns Claude's response as a string.
+    Returns (response_text, updated_session_messages).
     """
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -1211,7 +1214,6 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
         except Exception:
             pass
 
-    # Add dry_run instruction if needed
     system = SYSTEM_PROMPT + memory_context
     if dry_run:
         system += (
@@ -1219,7 +1221,11 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
             "that create, update, or delete records. Instead, describe what you WOULD do."
         )
 
-    messages = [{"role": "user", "content": user_request}]
+    # Maintain conversation history across multiple requests in the same session
+    if session_messages is None:
+        session_messages = []
+
+    session_messages.append({"role": "user", "content": user_request})
 
     # Set up logging
     os.makedirs("logs", exist_ok=True)
@@ -1237,7 +1243,7 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
             max_tokens=8192,
             system=system,
             tools=TOOL_DEFINITIONS,
-            messages=messages,
+            messages=session_messages,
         )
 
         # Check if Claude is done (no more tools to call)
@@ -1249,11 +1255,14 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
                     final_text = block.text
                     break
 
+            # Append assistant reply to session history so next call remembers this exchange
+            session_messages.append({"role": "assistant", "content": final_text})
+
             # Save the log
             with open(log_file, "w") as f:
                 json.dump({"request": user_request, "actions": log_entries}, f, indent=2)
 
-            return final_text
+            return final_text, session_messages
 
         # Claude wants to use a tool — execute it
         if response.stop_reason == "tool_use":
@@ -1293,11 +1302,11 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
                     })
 
             # Feed the tool results back to Claude so it can continue
-            messages.append({"role": "assistant", "content": response.content})
-            messages.append({"role": "user", "content": tool_results})
+            session_messages.append({"role": "assistant", "content": response.content})
+            session_messages.append({"role": "user", "content": tool_results})
 
         else:
             # Unexpected stop reason — break the loop
             break
 
-    return "Task completed."
+    return "Task completed.", session_messages
