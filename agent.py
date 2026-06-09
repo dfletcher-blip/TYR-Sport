@@ -125,6 +125,7 @@ from tools.activity_date import (
     update_last_activity_date,
     sync_last_activity_dates,
     get_last_activity_date_status,
+    create_activity_date_workflows,
 )
 
 
@@ -159,11 +160,13 @@ YOUR CAPABILITIES:
 14. MEMORY — Read and update persistent CRM memory to remember field names, entity names, and CRM-specific facts across sessions
 
 HOW YOU WORK:
+- ALWAYS call read_crm_memory() as your very first action every session before doing anything else — it tells you what fields, workflows, and facts already exist in this CRM so you don't repeat work or forget what was built
 - Always start by READING data before making any changes
 - Always EXPLAIN what you found before doing anything
 - For any UPDATE or CREATE action, state what you are about to do and why
 - After completing a task, give a clear SUMMARY of what was done
 - If something could cause problems, warn the user first
+- After successfully creating a field, workflow, or other persistent CRM object, ALWAYS call update_crm_memory to save the key facts so you remember them next session
 
 SAFETY RULES:
 - Never delete contacts without explicit permission
@@ -256,6 +259,7 @@ TOOL_REGISTRY = {
     "update_last_activity_date":        update_last_activity_date,
     "sync_last_activity_dates":         sync_last_activity_dates,
     "get_last_activity_date_status":    get_last_activity_date_status,
+    "create_activity_date_workflows":   create_activity_date_workflows,
 
     # Form customization tools
     "get_entity_form":                get_entity_form,
@@ -1169,6 +1173,17 @@ TOOL_DEFINITIONS = [
             },
             "required": ["entity"],
         },
+    },
+    {
+        "name": "create_activity_date_workflows",
+        "description": (
+            "Create Dynamics 365 Classic Workflows that automatically update tyr_lastactivitydate "
+            "on the regarding contact, lead, or account whenever an email, phone call, or task is "
+            "marked Completed in the CRM by a human. Run this once after setup_last_activity_date_fields. "
+            "The agent already auto-stamps the field when it sends emails — these workflows cover "
+            "activities logged by users directly in the CRM UI."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
     },
 ]
 
