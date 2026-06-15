@@ -112,8 +112,8 @@ def update_last_activity_date(entity: str, record_id: str) -> dict:
         params = {
             "$select": "activityid,activitytypecode,actualend,createdon",
             "$filter": (
-                f"_regardingobjectid_value eq {record_id} "
-                "and statecode eq 1"  # 1 = Completed
+                f"_regardingobjectid_value eq '{record_id}' "
+                "and statecode eq 1"
             ),
             "$orderby": "actualend desc",
             "$top": 1,
@@ -122,7 +122,7 @@ def update_last_activity_date(entity: str, record_id: str) -> dict:
 
         # Fall back to any activity (not just completed) if none found
         if not activities:
-            params["$filter"] = f"_regardingobjectid_value eq {record_id}"
+            params["$filter"] = f"_regardingobjectid_value eq '{record_id}'"
             params["$orderby"] = "createdon desc"
             activities = crm_get("activitypointers", params).get("value", [])
 
