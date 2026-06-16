@@ -45,5 +45,9 @@ if __name__ == "__main__":
             f"{result.get('skipped_no_activity', 0)} skipped, "
             f"{result.get('errors', 0)} errors"
         )
+        if result.get("error"):
+            log(f"  FATAL: {result['error']}")
+        for err in (result.get("error_details") or [])[:5]:
+            log(f"  ERROR: {err.get('name', '')} — {err.get('error', '')}")
 
     log("Sync complete.")
