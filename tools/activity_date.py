@@ -107,27 +107,35 @@ def update_last_activity_date(entity: str, record_id: str) -> dict:
 
     meta = _ENTITY_META[entity]
 
-    # Query activitypointer for the most recent activity linked to this record
+    # Navigation property names for each entity's activity collection
+    _NAV_PROPS = {
+        "lead":    ("Lead_ActivityPointers",    "leads"),
+        "contact": ("Contact_ActivityPointers", "contacts"),
+        "account": ("Account_ActivityPointers", "accounts"),
+    }
+    nav_prop, collection = _NAV_PROPS[entity]
+
+    # Query via navigation property (more reliable than filtering activitypointer directly)
     try:
         params = {
-            "$select": "activityid,activitytypecode,actualend,createdon",
-            "$filter": (
-                f"_regardingobjectid_value eq '{record_id}' "
-                "and statecode eq 1"
-            ),
-            "$orderby": "actualend desc",
+            "$select": "activityid,activitytypecode,actualend,createdon,statecode",
+            "$orderby": "createdon desc",
             "$top": 1,
         }
-        activities = crm_get("activitypointers", params).get("value", [])
-
-        # Fall back to any activity (not just completed) if none found
-        if not activities:
-            params["$filter"] = f"_regardingobjectid_value eq '{record_id}'"
-            params["$orderby"] = "createdon desc"
-            activities = crm_get("activitypointers", params).get("value", [])
+        activities = crm_get(f"{collection}({record_id})/{nav_prop}", params).get("value", [])
 
     except Exception as e:
-        return {"error": f"Could not query activities: {e}", "entity": entity, "record_id": record_id}
+        # Fall back to direct activitypointer filter if nav property fails
+        try:
+            params = {
+                "$select": "activityid,activitytypecode,actualend,createdon",
+                "$filter": f"_regardingobjectid_value eq '{record_id}'",
+                "$orderby": "createdon desc",
+                "$top": 1,
+            }
+            activities = crm_get("activitypointers", params).get("value", [])
+        except Exception as e2:
+            return {"error": f"Could not query activities: {e2}", "entity": entity, "record_id": record_id}
 
     if not activities:
         return {
