@@ -70,4 +70,36 @@ try:
 except Exception as e:
     print(f"  ERROR: {e}")
 
+# Try 4: Look for any Outreach custom entities
+print("\n--- Try 4: Search for Outreach custom tables in D365 ---")
+try:
+    r = crm_get("EntityDefinitions", {
+        "$select": "LogicalName,DisplayName",
+        "$filter": "contains(LogicalName,'outreach') or contains(LogicalName,'outreach')",
+        "$top": 20,
+    })
+    entities = r.get("value", [])
+    if entities:
+        for e in entities:
+            print(f"  {e.get('LogicalName')} — {e.get('DisplayName',{}).get('UserLocalizedLabel',{}).get('Label','')}")
+    else:
+        print("  No Outreach custom entities found.")
+except Exception as e:
+    print(f"  ERROR: {e}")
+
+# Try 5: Check all recent emails regardless of regarding
+print("\n--- Try 5: Most recent 5 emails in the system (any record) ---")
+try:
+    r = crm_get("emails", {
+        "$select": "activityid,subject,createdon,_regardingobjectid_value,regardingobjecttypecode",
+        "$orderby": "createdon desc",
+        "$top": 5,
+    })
+    emails = r.get("value", [])
+    print(f"Found {len(emails)} emails")
+    for a in emails:
+        print(f"  subject:'{a.get('subject','')}' | regarding:{a.get('regardingobjecttypecode')} | created:{a.get('createdon','')}")
+except Exception as e:
+    print(f"  ERROR: {e}")
+
 print("\nDone.")
