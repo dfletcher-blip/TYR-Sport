@@ -70,35 +70,58 @@ try:
 except Exception as e:
     print(f"  ERROR: {e}")
 
-# Try 4: Look for any Outreach custom entities
-print("\n--- Try 4: Search for Outreach custom tables in D365 ---")
+# Try 4: Look for a Contact with the same name — activities might be linked to Contact not Lead
+print("\n--- Try 4: Check for Contact record with same name ---")
 try:
-    r = crm_get("EntityDefinitions", {
-        "$select": "LogicalName,DisplayName",
-        "$filter": "contains(LogicalName,'outreach') or contains(LogicalName,'outreach')",
-        "$top": 20,
+    r = crm_get("contacts", {
+        "$select": "contactid,fullname",
+        "$filter": f"fullname eq '{NAME}'",
+        "$top": 3,
     })
-    entities = r.get("value", [])
-    if entities:
-        for e in entities:
-            print(f"  {e.get('LogicalName')} — {e.get('DisplayName',{}).get('UserLocalizedLabel',{}).get('Label','')}")
+    contacts = r.get("value", [])
+    if contacts:
+        for c in contacts:
+            cid = c["contactid"]
+            print(f"  Found contact: {c['fullname']} — {cid}")
+            acts = crm_get(f"contacts({cid})/Contact_ActivityPointers", {
+                "$select": "activityid,activitytypecode,subject,createdon,statecode",
+                "$top": 5,
+            }).get("value", [])
+            print(f"  Activities on contact: {len(acts)}")
+            for a in acts:
+                print(f"    {a.get('activitytypecode')} | {a.get('subject','')} | {a.get('createdon','')}")
     else:
-        print("  No Outreach custom entities found.")
+        print("  No contact found with this name.")
 except Exception as e:
     print(f"  ERROR: {e}")
 
-# Try 5: Check all recent emails regardless of regarding
-print("\n--- Try 5: Most recent 5 emails in the system (any record) ---")
+# Try 5: Most recent 5 emails in the system (any record)
+print("\n--- Try 5: Most recent 5 emails in the system ---")
 try:
     r = crm_get("emails", {
-        "$select": "activityid,subject,createdon,_regardingobjectid_value,regardingobjecttypecode",
+        "$select": "activityid,subject,createdon,_regardingobjectid_value",
         "$orderby": "createdon desc",
         "$top": 5,
     })
     emails = r.get("value", [])
     print(f"Found {len(emails)} emails")
     for a in emails:
-        print(f"  subject:'{a.get('subject','')}' | regarding:{a.get('regardingobjecttypecode')} | created:{a.get('createdon','')}")
+        print(f"  subject:'{a.get('subject','')}' | regarding:{a.get('_regardingobjectid_value','')} | created:{a.get('createdon','')}")
+except Exception as e:
+    print(f"  ERROR: {e}")
+
+# Try 6: Most recent 5 activitypointers (any record, any type)
+print("\n--- Try 6: Most recent 5 activities of any type in the system ---")
+try:
+    r = crm_get("activitypointers", {
+        "$select": "activityid,activitytypecode,subject,createdon,_regardingobjectid_value",
+        "$orderby": "createdon desc",
+        "$top": 5,
+    })
+    acts = r.get("value", [])
+    print(f"Found {len(acts)} activities")
+    for a in acts:
+        print(f"  {a.get('activitytypecode')} | '{a.get('subject','')}' | regarding:{a.get('_regardingobjectid_value','')} | created:{a.get('createdon','')}")
 except Exception as e:
     print(f"  ERROR: {e}")
 
