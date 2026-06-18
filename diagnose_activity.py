@@ -126,3 +126,46 @@ except Exception as e:
     print(f"  ERROR: {e}")
 
 print("\nDone.")
+
+# --- Extra: what record does the regarding GUID belong to? ---
+print("\n--- EXTRA: Look up what records the 'regarding' GUIDs from emails belong to ---")
+try:
+    emails = crm_get("emails", {
+        "$select": "subject,createdon,_regardingobjectid_value",
+        "$filter": "_regardingobjectid_value ne null",
+        "$orderby": "createdon desc",
+        "$top": 5,
+    }).get("value", [])
+
+    seen = set()
+    for e in emails:
+        rid = e.get("_regardingobjectid_value")
+        if rid and rid not in seen:
+            seen.add(rid)
+            # Try contact
+            try:
+                c = crm_get(f"contacts({rid})", {"$select": "fullname"})
+                if c.get("fullname"):
+                    print(f"  {rid} → Contact: {c['fullname']}")
+                    continue
+            except Exception:
+                pass
+            # Try lead
+            try:
+                l = crm_get(f"leads({rid})", {"$select": "fullname"})
+                if l.get("fullname"):
+                    print(f"  {rid} → Lead: {l['fullname']}")
+                    continue
+            except Exception:
+                pass
+            # Try account
+            try:
+                a = crm_get(f"accounts({rid})", {"$select": "name"})
+                if a.get("name"):
+                    print(f"  {rid} → Account: {a['name']}")
+                    continue
+            except Exception:
+                pass
+            print(f"  {rid} → Unknown record type")
+except Exception as e:
+    print(f"  ERROR: {e}")
