@@ -92,6 +92,23 @@ gianluca = matches[0]
 print(f"  Found: {gianluca['fullname']} — {gianluca['systemuserid']}")
 print()
 
+# ── Diagnostic: check what accountnumber field looks like ────────────────────
+print("Diagnostic: looking up first account by name to check field names...")
+sample_num, sample_name = accounts_in_sheet[0]
+diag = get("accounts", {
+    "$filter": f"contains(name,'{sample_name[:20]}')",
+    "$top": "1",
+}, extra_headers={"Prefer": "odata.include-annotations=OData.Community.Display.V1.FormattedValue"})
+diag_results = diag.get("value", [])
+if diag_results:
+    a = diag_results[0]
+    print(f"  Found by name: {a.get('name')}")
+    print(f"  accountnumber field value: {a.get('accountnumber')!r}")
+    print(f"  accountid: {a.get('accountid')}")
+else:
+    print(f"  Could not find '{sample_name}' by name either — check entity name or permissions")
+print()
+
 # ── Process each account ──────────────────────────────────────────────────────
 print(f"{'DRY RUN — ' if DRY_RUN else ''}Reassigning accounts to {gianluca['fullname']}...")
 print()
