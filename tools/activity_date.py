@@ -115,7 +115,8 @@ def update_last_activity_date(entity: str, record_id: str) -> dict:
     }
     nav_prop, collection = _NAV_PROPS[entity]
 
-    # Query via navigation property (more reliable than filtering activitypointer directly)
+    # Query activities — try two approaches and take whichever finds something
+    activities = []
     try:
         params = {
             "$select": "activityid,activitytypecode,actualend,createdon,statecode",
@@ -123,9 +124,10 @@ def update_last_activity_date(entity: str, record_id: str) -> dict:
             "$top": 1,
         }
         activities = crm_get(f"{collection}({record_id})/{nav_prop}", params).get("value", [])
+    except Exception:
+        pass
 
-    except Exception as e:
-        # Fall back to direct activitypointer filter if nav property fails
+    if not activities:
         try:
             params = {
                 "$select": "activityid,activitytypecode,actualend,createdon",
