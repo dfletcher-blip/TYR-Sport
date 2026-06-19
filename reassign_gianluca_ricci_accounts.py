@@ -92,6 +92,32 @@ gianluca = matches[0]
 print(f"  Found: {gianluca['fullname']} — {gianluca['systemuserid']}")
 print()
 
+# ── Diagnostic: find the exact AS400 field name ──────────────────────────────
+print("Diagnostic: finding AS400 field name...")
+sample_name = accounts_in_sheet[0][1]
+diag = get("accounts", {"$filter": f"contains(name,'{sample_name[:15]}')", "$top": "1"})
+diag_results = diag.get("value", [])
+if diag_results:
+    a = diag_results[0]
+    as400_fields = {k: v for k, v in a.items() if "as400" in k.lower() or "as_400" in k.lower()}
+    print(f"  Matched account: {a.get('name')}")
+    print(f"  AS400-related fields: {as400_fields}")
+    if not as400_fields:
+        print("  No AS400 field found — printing all fields:")
+        for k, v in a.items():
+            if not k.startswith("@"):
+                print(f"    {k}: {v!r}")
+else:
+    print(f"  Could not find account by name '{sample_name[:15]}' — trying without filter")
+    diag2 = get("accounts", {"$top": "1"})
+    a = diag2.get("value", [{}])[0]
+    print("  Sample account fields:")
+    for k, v in a.items():
+        if not k.startswith("@"):
+            print(f"    {k}: {v!r}")
+print()
+exit(0)  # Remove this line once field name is confirmed
+
 # ── Process each account ──────────────────────────────────────────────────────
 print(f"{'DRY RUN — ' if DRY_RUN else ''}Reassigning accounts to {gianluca['fullname']}...")
 print()
