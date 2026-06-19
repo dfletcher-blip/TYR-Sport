@@ -41,9 +41,9 @@ def get_headers(extra=None):
         h.update(extra)
     return h
 
-def get(path, params=None):
+def get(path, params=None, extra_headers=None):
     r = _session.get(f"{DYNAMICS_URL}/api/data/v9.2/{path}",
-                     headers=get_headers(), params=params, timeout=30)
+                     headers=get_headers(extra_headers), params=params, timeout=30)
     if not r.ok:
         raise RuntimeError(f"GET {path} failed {r.status_code}: {r.text[:400]}")
     return r.json()
@@ -101,9 +101,9 @@ ok, skipped, errors = [], [], []
 for acct_num, acct_name in accounts_in_sheet:
     try:
         data = get("accounts", {
-            "$select": "accountid,name,accountnumber,_ownerid_value,_ownerid_value@OData.Community.Display.V1.FormattedValue",
+            "$select": "accountid,name,accountnumber,_ownerid_value",
             "$filter": f"accountnumber eq '{acct_num}'",
-        })
+        }, extra_headers={"Prefer": "odata.include-annotations=OData.Community.Display.V1.FormattedValue"})
         results = data.get("value", [])
         if not results:
             print(f"  NOT FOUND  [{acct_num}] {acct_name}")
