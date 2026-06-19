@@ -81,9 +81,27 @@ conor_matches   = find_user("Conor Shelley")
 thomas_matches  = find_user("Thomas Wenzler")
 
 if not conor_matches:
-    print("ERROR: Conor Shelley not found"); exit(1)
+    print("ERROR: Conor Shelley not found")
+    # Search for similar names to help identify the correct spelling
+    similar = find_user("Conor")
+    if not similar:
+        similar = find_user("Shelley")
+    if similar:
+        print("  Did you mean one of these?")
+        for u in similar:
+            print(f"    {u['fullname']} — {u['internalemailaddress']}")
+    exit(1)
 if not thomas_matches:
-    print("ERROR: Thomas Wenzler not found"); exit(1)
+    print("ERROR: Thomas Wenzler not found")
+    # Search for similar names to help identify the correct spelling
+    similar = find_user("Thomas")
+    if not similar:
+        similar = find_user("Wenzler")
+    if similar:
+        print("  Did you mean one of these?")
+        for u in similar:
+            print(f"    {u['fullname']} — {u['internalemailaddress']}")
+    exit(1)
 
 conor  = conor_matches[0]
 thomas = thomas_matches[0]
