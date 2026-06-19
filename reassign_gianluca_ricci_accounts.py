@@ -101,8 +101,7 @@ ok, skipped, errors = [], [], []
 for acct_num, acct_name in accounts_in_sheet:
     try:
         data = get("accounts", {
-            "$select": "accountid,name,accountnumber,_ownerid_value",
-            "$expand": "ownerid($select=systemuserid,fullname)",
+            "$select": "accountid,name,accountnumber,_ownerid_value,_ownerid_value@OData.Community.Display.V1.FormattedValue",
             "$filter": f"accountnumber eq '{acct_num}'",
         })
         results = data.get("value", [])
@@ -113,7 +112,7 @@ for acct_num, acct_name in accounts_in_sheet:
 
         acct = results[0]
         acct_id = acct["accountid"]
-        current_owner = (acct.get("ownerid") or {}).get("fullname", "unknown")
+        current_owner = acct.get("_ownerid_value@OData.Community.Display.V1.FormattedValue", acct.get("_ownerid_value", "unknown"))
 
         if acct.get("_ownerid_value") == gianluca["systemuserid"]:
             print(f"  SKIP (already owned)  [{acct_num}] {acct_name}")
