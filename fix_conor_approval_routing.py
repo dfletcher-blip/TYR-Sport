@@ -79,6 +79,8 @@ def get_manager(user_id):
 print("Looking up users...")
 conor_matches   = find_user("Conor Shelley")
 thomas_matches  = find_user("Thomas Wenzler")
+if not thomas_matches:
+    thomas_matches = find_user("Tom Wenzler")
 
 if not conor_matches:
     print("ERROR: Conor Shelley not found")
