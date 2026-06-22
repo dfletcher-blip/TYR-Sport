@@ -178,18 +178,17 @@ def update_last_activity_date(entity: str, record_id: str) -> dict:
     }
 
 
-def sync_last_activity_dates(entity: str, limit: int = 200, preview_only: bool = False) -> dict:
+def sync_last_activity_dates(entity: str, limit: int = 5000, preview_only: bool = False) -> dict:
     """
-    Backfill tyr_lastactivitydate for all active records of an entity by
-    querying each record's linked activities.
+    Backfill tyr_lastactivitydate for all active records of an entity.
+
+    Uses a bulk approach: fetches all activities at once grouped by regarding ID,
+    then patches only the records that have activity and need updating.
+    Much faster than the per-record approach.
 
     entity: "lead", "contact", or "account"
-    limit: maximum number of records to process (default 200)
-    preview_only: if True, show which records would be updated without writing
-
-    Use this after setup_last_activity_date_fields to populate historical data.
-    For ongoing updates, consider a Dynamics 365 workflow/Power Automate flow
-    that calls update_last_activity_date when an activity is completed.
+    limit: maximum number of activity records to scan (default 5000)
+    preview_only: if True, show what would be updated without writing
     """
     entity = entity.lower()
     if entity not in _ENTITY_META:
@@ -198,65 +197,104 @@ def sync_last_activity_dates(entity: str, limit: int = 200, preview_only: bool =
     meta = _ENTITY_META[entity]
     collection = meta["collection"]
     id_field = meta["id_field"]
+    name_field = "fullname" if entity != "account" else "name"
 
-    # Fetch active records
+    # Step 1: Fetch all active record IDs for this entity
     try:
-        params = {
-            "$select": f"{id_field},{'fullname' if entity != 'account' else 'name'}",
+        record_pages = []
+        page_params = {
+            "$select": f"{id_field},{name_field}",
             "$filter": "statecode eq 0",
-            "$top": limit,
+            "$top": 2000,
         }
-        records = crm_get(collection, params).get("value", [])
+        page = crm_get(collection, page_params)
+        record_pages.extend(page.get("value", []))
+        # Follow @odata.nextLink for paging
+        while page.get("@odata.nextLink"):
+            page = crm_get(page["@odata.nextLink"], {})
+            record_pages.extend(page.get("value", []))
     except Exception as e:
         return {"error": f"Could not fetch {entity} records: {e}"}
 
-    if not records:
+    if not record_pages:
         return {"message": f"No active {entity} records found.", "count": 0}
 
-    name_field = "fullname" if entity != "account" else "name"
+    # Build lookup: record_id → name
+    record_map = {r[id_field]: r.get(name_field, "") for r in record_pages}
+    all_ids = set(record_map.keys())
+
+    # Step 2: Bulk-fetch recent activities, grouped by regarding ID
+    # We fetch in pages and keep only the most recent date per regarding ID
+    latest_by_record = {}  # record_id → ISO date string
+    try:
+        act_params = {
+            "$select": "activityid,createdon,_regardingobjectid_value",
+            "$filter": "_regardingobjectid_value ne null",
+            "$orderby": "createdon desc",
+            "$top": min(limit, 2000),
+        }
+        act_page = crm_get("activitypointers", act_params)
+        activities = act_page.get("value", [])
+        fetched = len(activities)
+
+        while act_page.get("@odata.nextLink") and fetched < limit:
+            act_page = crm_get(act_page["@odata.nextLink"], {})
+            batch = act_page.get("value", [])
+            activities.extend(batch)
+            fetched += len(batch)
+
+        for act in activities:
+            rid = act.get("_regardingobjectid_value")
+            if rid not in all_ids:
+                continue
+            date_str = (act.get("createdon") or "")[:10]
+            if not date_str:
+                continue
+            if rid not in latest_by_record or date_str > latest_by_record[rid]:
+                latest_by_record[rid] = date_str
+
+    except Exception as e:
+        return {"error": f"Could not fetch activities: {e}"}
 
     if preview_only:
         return {
             "preview_only": True,
             "entity": entity,
-            "record_count": len(records),
+            "would_update": len(latest_by_record),
+            "no_activity": len(all_ids) - len(latest_by_record),
             "records": [
-                {"id": r[id_field], "name": r.get(name_field, "")}
-                for r in records
+                {"id": rid, "name": record_map[rid], "date": d}
+                for rid, d in latest_by_record.items()
             ],
-            "message": f"Would sync Last Activity Date for {len(records)} {entity} records. Set preview_only=False to execute.",
+            "message": f"Would update {len(latest_by_record)} {entity} records. Set preview_only=False to execute.",
         }
 
+    # Step 3: Patch each record that has activity
     updated = []
-    skipped = []
     errors = []
+    for record_id, date_only in latest_by_record.items():
+        try:
+            crm_patch(collection, record_id, {FIELD_LOGICAL_NAME: date_only})
+            updated.append({"id": record_id, "name": record_map[record_id], "date": date_only})
+        except Exception as e:
+            errors.append({"id": record_id, "name": record_map[record_id], "error": str(e)})
 
-    for record in records:
-        record_id = record.get(id_field)
-        name = record.get(name_field, "")
-        result = update_last_activity_date(entity, record_id)
-
-        if result.get("success"):
-            if result.get("last_activity_date"):
-                updated.append({"id": record_id, "name": name, "date": result["last_activity_date"]})
-            else:
-                skipped.append({"id": record_id, "name": name, "reason": "No activities found"})
-        else:
-            errors.append({"id": record_id, "name": name, "error": result.get("error", "Unknown")})
+    skipped_count = len(all_ids) - len(latest_by_record)
 
     return {
         "success": True,
         "entity": entity,
-        "total_processed": len(records),
+        "total_processed": len(all_ids),
         "updated": len(updated),
-        "skipped_no_activity": len(skipped),
+        "skipped_no_activity": skipped_count,
         "errors": len(errors),
         "error_details": errors,
         "message": (
             f"Sync complete for {entity}: {len(updated)} updated, "
-            f"{len(skipped)} skipped (no activity), {len(errors)} errors."
+            f"{skipped_count} skipped (no activity), {len(errors)} errors."
         ),
     }
+
 
 
 def get_last_activity_date_status(entity: str, limit: int = 50) -> dict:
