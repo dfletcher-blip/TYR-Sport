@@ -223,25 +223,22 @@ def sync_last_activity_dates(entity: str, limit: int = 5000, preview_only: bool 
     record_map = {r[id_field]: r.get(name_field, "") for r in record_pages}
     all_ids = set(record_map.keys())
 
-    # Step 2: Bulk-fetch recent activities, grouped by regarding ID
-    # We fetch in pages and keep only the most recent date per regarding ID
+    # Step 2: Bulk-fetch all activities for this entity type
+    # Filter by regardingobjecttypecode so we only get activities linked to this entity
     latest_by_record = {}  # record_id → ISO date string
     try:
         act_params = {
             "$select": "activityid,createdon,_regardingobjectid_value",
-            "$filter": "_regardingobjectid_value ne null",
+            "$filter": f"regardingobjecttypecode eq '{entity}' and _regardingobjectid_value ne null",
             "$orderby": "createdon desc",
-            "$top": min(limit, 2000),
+            "$top": 2000,
         }
         act_page = crm_get("activitypointers", act_params)
         activities = act_page.get("value", [])
-        fetched = len(activities)
 
-        while act_page.get("@odata.nextLink") and fetched < limit:
+        while act_page.get("@odata.nextLink"):
             act_page = crm_get(act_page["@odata.nextLink"], {})
-            batch = act_page.get("value", [])
-            activities.extend(batch)
-            fetched += len(batch)
+            activities.extend(act_page.get("value", []))
 
         for act in activities:
             rid = act.get("_regardingobjectid_value")
