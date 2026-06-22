@@ -46,18 +46,27 @@ def get_options_for_entity(entity: str, attr_type: str) -> list:
         return []
 
 
-def get_option_set_name(entity: str, attr_type: str) -> str:
-    """Get the global option set name for an entity's tyr_tyrtype field."""
-    try:
-        meta = crm_get(
-            f"EntityDefinitions(LogicalName='{entity}')/Attributes(LogicalName='tyr_tyrtype')"
-            f"/Microsoft.Dynamics.CRM.{attr_type}",
-            {"$select": "LogicalName", "$expand": "OptionSet"},
-        )
-        return meta.get("OptionSet", {}).get("Name", "")
-    except Exception as e:
-        print(f"  Warning: could not get option set name for {entity}: {e}")
-        return ""
+def get_option_set_name(entity: str, attr_type: str) -> tuple:
+    """Get the global option set name and resolved attr_type for an entity's tyr_tyrtype field."""
+    types_to_try = [attr_type, "MultiSelectPicklistAttributeMetadata", "PicklistAttributeMetadata"]
+    seen = []
+    for t in types_to_try:
+        if t in seen:
+            continue
+        seen.append(t)
+        try:
+            meta = crm_get(
+                f"EntityDefinitions(LogicalName='{entity}')/Attributes(LogicalName='tyr_tyrtype')"
+                f"/Microsoft.Dynamics.CRM.{t}",
+                {"$select": "LogicalName", "$expand": "OptionSet"},
+            )
+            name = meta.get("OptionSet", {}).get("Name", "")
+            if name:
+                return name, t
+        except Exception:
+            pass
+    print(f"  Warning: could not get option set name for {entity} (tried all attribute types)")
+    return "", attr_type
 
 
 def label_exists(options: list, label: str) -> bool:
@@ -126,15 +135,15 @@ inserted_option_sets = {}
 for entity, attr_type in ENTITIES:
     print(f"── {entity.capitalize()} ──")
 
-    # Get the option set name
-    optset_name = get_option_set_name(entity, attr_type)
+    # Get the option set name (tries fallback attr types automatically)
+    optset_name, resolved_type = get_option_set_name(entity, attr_type)
     if not optset_name:
         print(f"  Could not determine option set name for {entity} — skipping.\n")
         continue
-    print(f"  Option set: {optset_name}")
+    print(f"  Option set: {optset_name} ({resolved_type})")
 
     # Get existing options
-    options = get_options_for_entity(entity, attr_type)
+    options = get_options_for_entity(entity, resolved_type)
     print(f"  Current options: {len(options)}")
 
     if label_exists(options, NEW_LABEL):
