@@ -46,6 +46,18 @@ def get_options_for_entity(entity: str, attr_type: str) -> list:
         return []
 
 
+def find_tyr_fields(entity: str):
+    """List all tyr_ prefixed attributes on an entity to find the right field name."""
+    try:
+        meta = crm_get(
+            f"EntityDefinitions(LogicalName='{entity}')/Attributes",
+            {"$filter": "startswith(LogicalName,'tyr_')", "$select": "LogicalName,AttributeType"},
+        )
+        return [(a["LogicalName"], a.get("AttributeType")) for a in meta.get("value", [])]
+    except Exception as e:
+        return []
+
+
 def get_option_set_name(entity: str, attr_type: str) -> tuple:
     """Get the global option set name and resolved attr_type for an entity's tyr_tyrtype field."""
     types_to_try = [attr_type, "MultiSelectPicklistAttributeMetadata", "PicklistAttributeMetadata"]
@@ -138,6 +150,9 @@ for entity, attr_type in ENTITIES:
     # Get the option set name (tries fallback attr types automatically)
     optset_name, resolved_type = get_option_set_name(entity, attr_type)
     if not optset_name:
+        tyr_fields = find_tyr_fields(entity)
+        if tyr_fields:
+            print(f"  TYR fields on {entity}: {tyr_fields}")
         print(f"  Could not determine option set name for {entity} — skipping.\n")
         continue
     print(f"  Option set: {optset_name} ({resolved_type})")
