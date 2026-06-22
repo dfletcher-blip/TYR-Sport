@@ -229,7 +229,7 @@ def sync_last_activity_dates(entity: str, limit: int = 5000, preview_only: bool 
     try:
         act_params = {
             "$select": "activityid,createdon,_regardingobjectid_value",
-            "$filter": f"regardingobjecttypecode eq '{entity}' and _regardingobjectid_value ne null",
+            "$filter": "_regardingobjectid_value ne null",
             "$orderby": "createdon desc",
             "$top": 2000,
         }
@@ -238,7 +238,12 @@ def sync_last_activity_dates(entity: str, limit: int = 5000, preview_only: bool 
 
         while act_page.get("@odata.nextLink"):
             act_page = crm_get(act_page["@odata.nextLink"], {})
-            activities.extend(act_page.get("value", []))
+            batch = act_page.get("value", [])
+            activities.extend(batch)
+            # Stop early if we've matched all records — no point fetching more
+            matched = sum(1 for a in activities if a.get("_regardingobjectid_value") in all_ids)
+            if matched >= len(all_ids):
+                break
 
         for act in activities:
             rid = act.get("_regardingobjectid_value")
