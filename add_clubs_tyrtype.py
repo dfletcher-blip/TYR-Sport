@@ -60,24 +60,31 @@ def find_tyr_fields(entity: str):
 
 def get_option_set_name(entity: str, attr_type: str) -> tuple:
     """Get the global option set name and resolved attr_type for an entity's tyr_tyrtype field."""
-    types_to_try = [attr_type, "MultiSelectPicklistAttributeMetadata", "PicklistAttributeMetadata"]
-    seen = []
-    for t in types_to_try:
-        if t in seen:
-            continue
-        seen.append(t)
-        try:
-            meta = crm_get(
-                f"EntityDefinitions(LogicalName='{entity}')/Attributes(LogicalName='tyr_tyrtype')"
-                f"/Microsoft.Dynamics.CRM.{t}",
-                {"$select": "LogicalName", "$expand": "OptionSet"},
-            )
-            name = meta.get("OptionSet", {}).get("Name", "")
-            if name:
-                return name, t
-        except Exception:
-            pass
-    print(f"  Warning: could not get option set name for {entity} (tried all attribute types)")
+    # Candidate field names to try for this entity
+    field_candidates = ["tyr_tyrtype"]
+    if entity == "opportunity":
+        field_candidates = ["tyr_tyrtype", "tyr_opp_tyr_type", "tyr_opportunitytype",
+                            "tyr_opp_tyrtype", "tyr_type", "tyr_opptype"]
+
+    attr_types = ["PicklistAttributeMetadata", "MultiSelectPicklistAttributeMetadata"]
+
+    for field in field_candidates:
+        for t in attr_types:
+            try:
+                meta = crm_get(
+                    f"EntityDefinitions(LogicalName='{entity}')/Attributes(LogicalName='{field}')"
+                    f"/Microsoft.Dynamics.CRM.{t}",
+                    {"$select": "LogicalName", "$expand": "OptionSet"},
+                )
+                name = meta.get("OptionSet", {}).get("Name", "")
+                if name:
+                    if field != "tyr_tyrtype":
+                        print(f"  Resolved field: {field}")
+                    return name, t
+            except Exception:
+                pass
+
+    print(f"  Warning: could not get option set name for {entity} (tried all attribute types and field names)")
     return "", attr_type
 
 
