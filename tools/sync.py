@@ -163,6 +163,63 @@ def get_contacts_with_mismatched_account_field(
     }
 
 
+def sync_contact_owner_from_account(dry_run: bool = False) -> dict:
+    """
+    Set each contact's owner to match its parent account's owner.
+    Contacts with no parent account are skipped.
+    """
+    params = {
+        "$select": "contactid,fullname,_ownerid_value,_parentcustomerid_value",
+        "$expand": "parentcustomerid_account($select=accountid,name,_ownerid_value)",
+        "$filter": "_parentcustomerid_value ne null",
+        "$top": 5000,
+    }
+
+    contacts = crm_get("contacts", params).get("value", [])
+
+    if not contacts:
+        return {"message": "No contacts with a parent account found.", "contacts_updated": 0}
+
+    updated = skipped = 0
+    errors = []
+
+    for contact in contacts:
+        contact_id    = contact.get("contactid")
+        contact_name  = contact.get("fullname", "Unknown")
+        contact_owner = contact.get("_ownerid_value")
+        account_data  = contact.get("parentcustomerid_account") or {}
+        account_owner = account_data.get("_ownerid_value")
+
+        if not account_owner:
+            skipped += 1
+            continue
+
+        if contact_owner == account_owner:
+            skipped += 1
+            continue
+
+        if not dry_run:
+            try:
+                crm_patch("contacts", contact_id,
+                          {"ownerid@odata.bind": f"/systemusers({account_owner})"})
+                updated += 1
+                if updated % 100 == 0:
+                    print(f"  ... {updated} contacts updated so far")
+            except Exception as e:
+                errors.append(f"{contact_name}: {e}")
+        else:
+            updated += 1
+
+    return {
+        "dry_run":                dry_run,
+        "total_contacts_checked": len(contacts),
+        "contacts_updated":       updated,
+        "contacts_skipped":       skipped,
+        "errors":                 len(errors),
+        "error_details":          errors[:5],
+    }
+
+
 def sync_all_crossfit_contacts(dry_run: bool = False) -> dict:
     """
     Convenience function: sync tyr_tyrtype from Account to Contact for all accounts.

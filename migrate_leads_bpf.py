@@ -103,7 +103,7 @@ def fetch_leads(filter_str):
     results = []
     url = f"{DYNAMICS_URL}/api/data/v9.2/leads"
     params = {
-        "$select": "leadid,fullname,stageid,_processid_value",
+        "$select": "leadid,fullname,stageid,_stageid_value,_processid_value",
         "$filter": filter_str,
         "$top": 1000,
     }
