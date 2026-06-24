@@ -136,58 +136,58 @@ print(f"  On old BPF: {len(on_old_bpf)}, Unassigned: {len(unassigned)}, "
 
 if not all_leads:
     print("No leads to migrate. All leads are already on the new BPF with correct stages.")
-    exit(0)
+    errors = 0
+else:
+    # --- Step 4: Batch migrate via PATCH ---
+    print("Step 4: Migrating leads to new BPF...")
+    BATCH_SIZE = 50
+    updated = errors = 0
+    total_batches = (len(all_leads) + BATCH_SIZE - 1) // BATCH_SIZE
 
-# --- Step 4: Batch migrate via PATCH ---
-print("Step 4: Migrating leads to new BPF...")
-BATCH_SIZE = 50
-updated = errors = 0
-total_batches = (len(all_leads) + BATCH_SIZE - 1) // BATCH_SIZE
+    for batch_num, start in enumerate(range(0, len(all_leads), BATCH_SIZE), 1):
+        batch = all_leads[start:start + BATCH_SIZE]
+        boundary = f"batch_{uuid.uuid4().hex}"
 
-for batch_num, start in enumerate(range(0, len(all_leads), BATCH_SIZE), 1):
-    batch = all_leads[start:start + BATCH_SIZE]
-    boundary = f"batch_{uuid.uuid4().hex}"
+        parts = []
+        for lead in batch:
+            old_stage_id = lead.get("_stageid_value") or lead.get("stageid")
+            new_stage_id = stage_id_map.get(old_stage_id, default_new_stage)
+            lid = lead["leadid"]
+            payload = (
+                f'{{"processid@odata.bind":"/workflows({new_bpf_id})",'
+                f'"stageid@odata.bind":"/processstages({new_stage_id})"}}'
+            )
+            parts.append(
+                f"--{boundary}\r\n"
+                f"Content-Type: application/http\r\n"
+                f"Content-Transfer-Encoding: binary\r\n\r\n"
+                f"PATCH {DYNAMICS_URL}/api/data/v9.2/leads({lid}) HTTP/1.1\r\n"
+                f"Content-Type: application/json\r\n"
+                f"If-Match: *\r\n\r\n"
+                f"{payload}\r\n"
+            )
+        body = "".join(parts) + f"--{boundary}--\r\n"
 
-    parts = []
-    for lead in batch:
-        old_stage_id = lead.get("_stageid_value") or lead.get("stageid")
-        new_stage_id = stage_id_map.get(old_stage_id, default_new_stage)
-        lid = lead["leadid"]
-        payload = (
-            f'{{"processid@odata.bind":"/workflows({new_bpf_id})",'
-            f'"stageid@odata.bind":"/processstages({new_stage_id})"}}'
+        resp = requests.post(
+            f"{DYNAMICS_URL}/api/data/v9.2/$batch",
+            headers={**get_headers(), "Content-Type": f"multipart/mixed; boundary={boundary}"},
+            data=body.encode("utf-8"),
+            timeout=120,
         )
-        parts.append(
-            f"--{boundary}\r\n"
-            f"Content-Type: application/http\r\n"
-            f"Content-Transfer-Encoding: binary\r\n\r\n"
-            f"PATCH {DYNAMICS_URL}/api/data/v9.2/leads({lid}) HTTP/1.1\r\n"
-            f"Content-Type: application/json\r\n"
-            f"If-Match: *\r\n\r\n"
-            f"{payload}\r\n"
-        )
-    body = "".join(parts) + f"--{boundary}--\r\n"
+        if resp.ok:
+            ok = resp.text.count("HTTP/1.1 204")
+            fail = len(batch) - ok
+            updated += ok
+            errors += fail
+            print(f"  Batch {batch_num}/{total_batches}: {ok} migrated, {fail} errors")
+        else:
+            errors += len(batch)
+            print(f"  Batch {batch_num}/{total_batches} FAILED: {resp.status_code} {resp.text[:150]}")
+        time.sleep(1)
 
-    resp = requests.post(
-        f"{DYNAMICS_URL}/api/data/v9.2/$batch",
-        headers={**get_headers(), "Content-Type": f"multipart/mixed; boundary={boundary}"},
-        data=body.encode("utf-8"),
-        timeout=120,
-    )
-    if resp.ok:
-        ok = resp.text.count("HTTP/1.1 204")
-        fail = len(batch) - ok
-        updated += ok
-        errors += fail
-        print(f"  Batch {batch_num}/{total_batches}: {ok} migrated, {fail} errors")
-    else:
-        errors += len(batch)
-        print(f"  Batch {batch_num}/{total_batches} FAILED: {resp.status_code} {resp.text[:150]}")
-    time.sleep(1)
-
-print(f"\nDone.")
-print(f"  Migrated: {updated}")
-print(f"  Errors:   {errors}")
+    print(f"\nDone.")
+    print(f"  Migrated: {updated}")
+    print(f"  Errors:   {errors}")
 
 # --- Step 5: Deactivate old BPF so new leads default to the new one ---
 if errors == 0:
