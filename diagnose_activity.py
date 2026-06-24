@@ -9,7 +9,65 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(__file__))
 from config.crm_connection import crm_get
 
-NAME = "Mike Wilkinson"  # change this if needed
+NAME = "Mike Wilkinson"
+
+print(f"\n=== Looking up lead: {NAME} ===")
+leads = crm_get("leads", {
+    "$select": "leadid,fullname,emailaddress1",
+    "$filter": f"fullname eq '{NAME}'",
+    "$top": 3,
+}).get("value", [])
+
+if not leads:
+    print("Lead not found.")
+    sys.exit(1)
+
+lead = leads[0]
+lead_id = lead["leadid"]
+lead_email = lead.get("emailaddress1", "")
+print(f"Found: {lead['fullname']} — ID: {lead_id} — Email: {lead_email}\n")
+
+# Try: activityparty — find emails where this lead appears as a party
+print("--- Try: activityparties where partyid = lead ID ---")
+try:
+    r = crm_get("activityparties", {
+        "$select": "activityid,participationtypemask,_partyid_value",
+        "$filter": f"_partyid_value eq '{lead_id}'",
+        "$top": 10,
+    })
+    parties = r.get("value", [])
+    print(f"Found {len(parties)} party records")
+    for p in parties:
+        print(f"  activityid:{p.get('activityid')} type:{p.get('participationtypemask')}")
+        # Look up the activity
+        try:
+            act = crm_get(f"activitypointers({p['activityid']})", {
+                "$select": "activitytypecode,subject,createdon"
+            })
+            print(f"    → {act.get('activitytypecode')} | {act.get('subject','')} | {act.get('createdon','')}")
+        except Exception:
+            pass
+except Exception as e:
+    print(f"  ERROR: {e}")
+
+# Also try with the lead's email address
+if lead_email:
+    print(f"\n--- Try: emails where emailaddress matches {lead_email} ---")
+    try:
+        r = crm_get("activityparties", {
+            "$select": "activityid,participationtypemask,addressused",
+            "$filter": f"addressused eq '{lead_email}'",
+            "$top": 10,
+        })
+        parties = r.get("value", [])
+        print(f"Found {len(parties)} party records by email address")
+        for p in parties:
+            print(f"  activityid:{p.get('activityid')} type:{p.get('participationtypemask')}")
+    except Exception as e:
+        print(f"  ERROR: {e}")
+
+print("\nDone.")
+
 
 print(f"\n=== Looking up lead: {NAME} ===")
 leads = crm_get("leads", {
