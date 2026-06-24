@@ -192,16 +192,24 @@ else:
 # --- Step 5: Deactivate old BPF so new leads default to the new one ---
 if errors == 0:
     print("\nStep 5: Deactivating old BPF...")
-    r = requests.patch(
-        f"{DYNAMICS_URL}/api/data/v9.2/workflows({old_bpf_id})",
-        headers=get_headers(),
-        json={"statecode": 0, "statuscode": 1},  # Draft = inactive
-        timeout=30,
-    )
-    if r.status_code in (200, 204):
-        print("  Old BPF deactivated. New leads will use the new BPF.")
+    for attempt in range(1, 4):
+        try:
+            r = requests.patch(
+                f"{DYNAMICS_URL}/api/data/v9.2/workflows({old_bpf_id})",
+                headers=get_headers(),
+                json={"statecode": 0, "statuscode": 1},  # Draft = inactive
+                timeout=120,
+            )
+            if r.status_code in (200, 204):
+                print("  Old BPF deactivated. New leads will use the new BPF.")
+            else:
+                print(f"  WARNING: Could not deactivate old BPF: {r.status_code} {r.text[:150]}")
+                print("  Deactivate it manually in Dynamics 365 > Settings > Process Center.")
+            break
+        except requests.exceptions.Timeout:
+            print(f"  Attempt {attempt}/3 timed out, retrying...")
+            time.sleep(5 * attempt)
     else:
-        print(f"  WARNING: Could not deactivate old BPF: {r.status_code} {r.text[:150]}")
-        print("  Deactivate it manually in Dynamics 365 > Settings > Process Center.")
+        print("  ERROR: All retries timed out. Deactivate manually in Dynamics 365 > Settings > Process Center.")
 else:
     print("\nStep 5: Skipping old BPF deactivation due to migration errors — fix errors first.")
