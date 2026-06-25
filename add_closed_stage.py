@@ -1,11 +1,9 @@
 """
 Add a "Closed" stage to the end of the Lead to Opportunity BPF.
-Follows the same deactivate → patch clientdata → reactivate pattern
-used by fix_bpf_errors.py.
-
+Handles the Microsoft.Crm.Workflow.ObjectModel nested StageStep format.
 Safe to re-run: skips if "Closed" stage already exists.
 """
-import os, json, uuid, requests, time
+import os, json, uuid, re, requests, time
 from dotenv import load_dotenv
 load_dotenv()
 from config.crm_connection import get_access_token
@@ -27,13 +25,29 @@ def get_headers():
     }
 
 
+def all_numeric_ids(obj):
+    """Collect all numeric suffixes from id fields like 'StageStep3', 'StepStep4'."""
+    ids = []
+    if isinstance(obj, dict):
+        raw = obj.get("id", "")
+        m = re.search(r"(\d+)$", str(raw))
+        if m:
+            ids.append(int(m.group(1)))
+        for v in obj.values():
+            ids.extend(all_numeric_ids(v))
+    elif isinstance(obj, list):
+        for item in obj:
+            ids.extend(all_numeric_ids(item))
+    return ids
+
+
 # ── Step 1: Fetch the active Lead to Opportunity BPF ──────────────────────────
 print("Step 1: Fetching BPF...")
 resp = requests.get(
     f"{DYNAMICS_URL}/api/data/v9.2/workflows",
     headers=get_headers(),
     params={
-        "$select": "workflowid,name,clientdata,statecode,ismanaged",
+        "$select": "workflowid,name,clientdata,statecode",
         "$filter": "category eq 4 and contains(name,'Lead to Opportunity') and statecode eq 1",
         "$orderby": "createdon desc",
         "$top": 1,
@@ -46,139 +60,94 @@ if not bpfs:
     print("ERROR: No active 'Lead to Opportunity' BPF found.")
     exit(1)
 
-bpf       = bpfs[0]
-bpf_id    = bpf["workflowid"]
-bpf_name  = bpf["name"]
+bpf        = bpfs[0]
+bpf_id     = bpf["workflowid"]
+bpf_name   = bpf["name"]
 clientdata = bpf.get("clientdata") or ""
-print(f"  Name:    {bpf_name}")
-print(f"  ID:      {bpf_id}")
-print(f"  Managed: {bpf.get('ismanaged')}")
-print(f"  Def size:{len(clientdata)} chars\n")
+print(f"  Name: {bpf_name}")
+print(f"  ID:   {bpf_id}")
+print(f"  Size: {len(clientdata)} chars\n")
 
-if not clientdata:
-    print("ERROR: clientdata is empty — cannot modify.")
+data = json.loads(clientdata)
+
+
+# ── Step 2: Navigate to the EntityStep's steps list ───────────────────────────
+print("Step 2: Locating stage list...")
+
+entity_step = None
+for item in data.get("steps", {}).get("list", []):
+    if item.get("__class", "").startswith("EntityStep"):
+        entity_step = item
+        break
+
+if not entity_step:
+    print("ERROR: Could not find EntityStep in clientdata.")
     exit(1)
 
-
-# ── Step 2: Parse the clientdata and inspect stage structure ───────────────────
-print("Step 2: Parsing clientdata...")
-try:
-    data = json.loads(clientdata)
-except json.JSONDecodeError as e:
-    print(f"ERROR: Could not parse clientdata as JSON: {e}")
-    exit(1)
-
-# Dynamics 365 BPF clientdata can use either a "stages" dict keyed by GUID
-# or a top-level list. Detect which format we have.
-stages_raw = data.get("stages")
-stage_order = data.get("stageOrder") or data.get("StageOrder") or []
-
-if isinstance(stages_raw, dict):
-    # Format A: {"stages": {"<guid>": {...}}, "stageOrder": [...]}
-    fmt = "dict"
-    print(f"  Stage format: dict ({len(stages_raw)} stages)")
-    for sid, s in stages_raw.items():
-        name = s.get("DisplayName") or s.get("displayName") or s.get("name") or "(unnamed)"
-        order = s.get("stepOrder") or s.get("order") or "?"
-        print(f"    [{order}] {name} ({sid[:8]}...)")
-elif isinstance(stages_raw, list):
-    # Format B: {"stages": [{"stageId": "...", ...}, ...]}
-    fmt = "list"
-    print(f"  Stage format: list ({len(stages_raw)} stages)")
-    for s in stages_raw:
-        sid   = s.get("stageId") or s.get("id") or "?"
-        name  = s.get("DisplayName") or s.get("displayName") or s.get("stageName") or "(unnamed)"
-        order = s.get("stepOrder") or s.get("order") or "?"
-        print(f"    [{order}] {name} ({str(sid)[:8]}...)")
-else:
-    print(f"  WARNING: Unexpected stages structure type: {type(stages_raw)}")
-    print("  Top-level keys:", list(data.keys())[:20])
-    fmt = "unknown"
-
+stage_list = entity_step["steps"]["list"]
+stage_steps = [s for s in stage_list if s.get("__class", "").startswith("StageStep")]
+print(f"  Found {len(stage_steps)} stage(s):")
+for s in stage_steps:
+    labels = s.get("stepLabels", {}).get("list", [])
+    label  = labels[0].get("description", "(no label)") if labels else s.get("description", "(no label)")
+    print(f"    [{s['id']}] {label.strip()}")
 print()
 
 
-# ── Step 3: Guard — skip if "Closed" already exists ───────────────────────────
-def stage_names(data, fmt):
-    if fmt == "dict":
-        return [
-            (s.get("DisplayName") or s.get("displayName") or s.get("name") or "").lower()
-            for s in data["stages"].values()
+# ── Step 3: Guard — skip if Closed already exists ─────────────────────────────
+for s in stage_steps:
+    labels = s.get("stepLabels", {}).get("list", [])
+    label  = (labels[0].get("description", "") if labels else s.get("description", "")).strip().lower()
+    if label == "closed":
+        print("  'Closed' stage already exists — nothing to do.")
+        exit(0)
+
+
+# ── Step 4: Build the new Closed StageStep ────────────────────────────────────
+print("Step 3: Building 'Closed' stage...")
+
+# Find highest numeric ID used anywhere in the definition so we don't collide
+max_id    = max(all_numeric_ids(data), default=100)
+new_num   = max_id + 1
+stage_id  = f"StageStep{new_num}"
+step_name = f"Step_{new_num}"
+
+# The labelId is also the processstageid Dynamics registers for this stage
+label_id  = str(uuid.uuid4())
+
+new_stage = {
+    "__class":    "StageStep:#Microsoft.Crm.Workflow.ObjectModel",
+    "id":         stage_id,
+    "description":"Closed",
+    "name":       step_name,
+    "stepLabels": {
+        "list": [
+            {
+                "labelId":      label_id,
+                "languageCode": 1033,
+                "description":  "Closed",
+            }
         ]
-    if fmt == "list":
-        return [
-            (s.get("DisplayName") or s.get("displayName") or s.get("stageName") or "").lower()
-            for s in data["stages"]
-        ]
-    return []
+    },
+    "steps": {"list": []},
+}
 
-if "closed" in stage_names(data, fmt):
-    print("  'Closed' stage already exists — nothing to do.")
-    exit(0)
-
-
-# ── Step 4: Build the new "Closed" stage and append it ────────────────────────
-print("Step 3: Adding 'Closed' stage...")
-new_stage_id = str(uuid.uuid4())
-
-if fmt == "dict":
-    existing_orders = [
-        s.get("stepOrder") or s.get("order") or 0
-        for s in data["stages"].values()
-    ]
-    next_order = max((o for o in existing_orders if isinstance(o, int)), default=4) + 1
-
-    # Copy structure from the last stage as a template, then clear its steps
-    last_stage_id = stage_order[-1] if stage_order else list(data["stages"].keys())[-1]
-    template = dict(data["stages"].get(last_stage_id, {}))
-
-    new_stage = {
-        "DisplayName":       "Closed",
-        "EntityLogicalName": template.get("EntityLogicalName", "lead"),
-        "stepOrder":         next_order,
-        "steps":             {},
-    }
-    data["stages"][new_stage_id] = new_stage
-    if isinstance(stage_order, list):
-        data["stageOrder"] = stage_order + [new_stage_id]
-    print(f"  Added stage '{new_stage['DisplayName']}' as order {next_order} (id {new_stage_id[:8]}...)")
-
-elif fmt == "list":
-    existing_orders = [
-        s.get("stepOrder") or s.get("order") or 0
-        for s in data["stages"]
-    ]
-    next_order = max((o for o in existing_orders if isinstance(o, int)), default=4) + 1
-
-    template = data["stages"][-1] if data["stages"] else {}
-    new_stage = {
-        "stageId":           new_stage_id,
-        "DisplayName":       "Closed",
-        "displayName":       "Closed",
-        "EntityLogicalName": template.get("EntityLogicalName", "lead"),
-        "stepOrder":         next_order,
-        "steps":             [],
-    }
-    data["stages"].append(new_stage)
-    print(f"  Added stage 'Closed' as order {next_order} (id {new_stage_id[:8]}...)")
-
-else:
-    print("ERROR: Cannot add stage to unrecognised clientdata structure.")
-    print("  Dumping first 2000 chars of clientdata for inspection:")
-    print(clientdata[:2000])
-    exit(1)
+stage_list.append(new_stage)
+print(f"  New stage id:    {stage_id}")
+print(f"  New labelId:     {label_id}")
+print()
 
 fixed = json.dumps(data, separators=(",", ":"))
-print(f"  New def size: {len(fixed)} chars\n")
+print(f"  Updated def size: {len(fixed)} chars\n")
 
 
-# ── Step 5: Also create a processstage record so Dynamics tracks the stage ────
-print("Step 4: Creating processstage record in CRM...")
+# ── Step 5: Register the processstage record ──────────────────────────────────
+print("Step 4: Creating processstage record...")
 ps_payload = {
-    "processstageid": new_stage_id,
-    "stagename":      "Closed",
-    "stagecategory":  4,   # 4 = Qualify (last meaningful stage; no standard "closed" category)
-    "processid@odata.bind": f"/workflows({bpf_id})",
+    "processstageid":           label_id,
+    "stagename":                "Closed",
+    "stagecategory":            4,
+    "processid@odata.bind":     f"/workflows({bpf_id})",
 }
 r_ps = requests.post(
     f"{DYNAMICS_URL}/api/data/v9.2/processstages",
@@ -187,12 +156,12 @@ r_ps = requests.post(
     timeout=30,
 )
 if r_ps.status_code in (201, 204):
-    print(f"  processstage created: {new_stage_id}")
-elif r_ps.status_code == 400 and "duplicate" in r_ps.text.lower():
+    print(f"  processstage created ({label_id})")
+elif r_ps.status_code == 409 or "duplicate" in r_ps.text.lower():
     print(f"  processstage already exists — continuing.")
 else:
-    print(f"  WARNING: processstage create returned {r_ps.status_code}: {r_ps.text[:200]}")
-    print("  Continuing anyway — the clientdata patch may still work.\n")
+    print(f"  WARNING ({r_ps.status_code}): {r_ps.text[:200]}")
+    print("  Continuing — clientdata patch may still work.\n")
 print()
 
 
@@ -230,7 +199,7 @@ r = requests.patch(
 print(f"  Patch: {r.status_code}")
 if not (r.ok or r.status_code == 204):
     print(f"  ERROR: {r.text[:400]}")
-    # Try to reactivate before exiting so the BPF isn't left dormant
+    # Reactivate without changes so BPF isn't left dormant
     requests.post(
         f"{DYNAMICS_URL}/api/data/v9.2/SetState",
         headers=get_headers(),
@@ -241,7 +210,7 @@ if not (r.ok or r.status_code == 204):
         },
         timeout=30,
     )
-    print("  BPF reactivated (without changes). Exiting.")
+    print("  BPF reactivated without changes.")
     exit(1)
 time.sleep(3)
 
@@ -269,9 +238,9 @@ print(f"  Activate: {r.status_code}\n")
 
 if r.ok or r.status_code == 204:
     print("=" * 60)
-    print("SUCCESS — 'Closed' stage added to the BPF.")
-    print("Refresh the lead form in Dynamics 365 to see the new stage.")
+    print("SUCCESS — 'Closed' stage added.")
+    print("Refresh the lead form to see: New → Contacting → Engaged → Qualified → Closed")
     print("=" * 60)
 else:
     print(f"WARNING: Reactivation failed ({r.status_code}): {r.text[:300]}")
-    print("BPF is currently inactive — reactivate manually in the CRM.")
+    print("BPF is currently inactive — reactivate manually in CRM.")
