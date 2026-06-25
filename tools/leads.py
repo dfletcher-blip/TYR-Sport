@@ -416,6 +416,32 @@ def bulk_import_leads(file_path: str, preview_only: bool = True) -> dict:
     }
 
 
+def disqualify_lead(lead_id: str, reason: str = "Lost") -> dict:
+    """
+    Close/disqualify a lead — marks it as Closed at the end of the pipeline.
+
+    lead_id: the unique ID of the lead to close
+    reason:  one of "Lost", "Cannot Contact", "No Longer Interested", "Canceled"
+             (default "Lost")
+    """
+    reason_codes = {
+        "lost":                 4,
+        "cannot contact":       5,
+        "no longer interested": 6,
+        "canceled":             7,
+    }
+    status_code = reason_codes.get(reason.lower(), 4)
+
+    crm_patch("leads", lead_id, {"statecode": 2, "statuscode": status_code})
+    return {
+        "success": True,
+        "lead_id": lead_id,
+        "stage": "Closed",
+        "reason": reason,
+        "message": f"Lead {lead_id} closed as '{reason}'.",
+    }
+
+
 def find_stale_leads(days_inactive: int = 14) -> dict:
     """
     Find open leads that haven't been touched recently.

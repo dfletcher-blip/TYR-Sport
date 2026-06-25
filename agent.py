@@ -93,6 +93,7 @@ from tools.leads import (
     get_lead_details,
     update_lead,
     qualify_lead,
+    disqualify_lead,
     get_lead_summary,
     find_stale_leads,
     bulk_import_leads,
@@ -142,7 +143,7 @@ YOUR CAPABILITIES:
 4. DASHBOARDS — List, create, reorder, clone, and update dashboards (created as personal dashboards visible in My Dashboards)
 5. OPPORTUNITIES — Search deals, view pipeline, track stalled opportunities, update stages
 6. ACCOUNTS — Search companies, view account details with contacts and deals, update records
-7. LEADS — Search leads, qualify leads, find stale leads, update records, bulk import from CSV
+7. LEADS — Search leads, qualify leads, close/disqualify leads (Closed stage), find stale leads, update records, bulk import from CSV
 8. TEAMS — List teams, view team members, search by name
 9. BULK UPDATES — Update many contacts, leads, accounts, or opportunities at once by filter
 10. REPORTS — Data quality, pipeline, lead source, and activity reports
@@ -230,6 +231,7 @@ TOOL_REGISTRY = {
     "get_lead_details":            get_lead_details,
     "update_lead":                 update_lead,
     "qualify_lead":                qualify_lead,
+    "disqualify_lead":             disqualify_lead,
     "get_lead_summary":            get_lead_summary,
     "find_stale_leads":            find_stale_leads,
     "bulk_import_leads":           bulk_import_leads,
@@ -707,6 +709,22 @@ TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {"lead_id": {"type": "string", "description": "The lead GUID to qualify"}},
+            "required": ["lead_id"],
+        },
+    },
+    {
+        "name": "disqualify_lead",
+        "description": "Close/disqualify a lead — marks it as Closed at the end of the pipeline. Use when a lead is lost, unresponsive, or no longer a prospect.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_id": {"type": "string", "description": "The lead GUID to close"},
+                "reason": {
+                    "type": "string",
+                    "enum": ["Lost", "Cannot Contact", "No Longer Interested", "Canceled"],
+                    "description": "Reason for closing the lead (default: Lost)",
+                },
+            },
             "required": ["lead_id"],
         },
     },
