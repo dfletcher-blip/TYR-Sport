@@ -1,28 +1,25 @@
 """
-Create two real-time Dynamics 365 workflows on the Lead entity:
+Create two Dynamics 365 workflows that update a field on the lead record:
 
   1. "TYR - Lead: Activity Logged → Contacting"
-     Trigger: a new activity (email, phone call, task, appointment) is
-     created regarding a lead that is currently in the "New" stage.
-     Action: advance the lead's BPF stage to "Contacting".
+     Trigger: any activity (email, call, task) created regarding a lead
+     Action:  set the lead's status field to Contacting
 
   2. "TYR - Lead: Email Reply Received → Engaged"
-     Trigger: an inbound email (directioncode = Incoming) is created
-     regarding a lead that is currently in the "Contacting" stage.
-     Action: advance the lead's BPF stage to "Engaged".
+     Trigger: inbound email (directioncode = Incoming) regarding a lead
+     Action:  set the lead's status field to Engaged
 
-Both workflows are created as real-time (synchronous) workflows so
-the stage updates immediately when the activity is saved.
+Reads the lead's statuscode optionset to find the correct integer values
+for Contacting and Engaged before building the workflows.
 
-Run this once. Safe to re-run — skips workflows that already exist.
+Safe to re-run — skips workflows that already exist.
 """
-import os, uuid, requests, time
+import os, uuid, requests, time, json
 from dotenv import load_dotenv
 load_dotenv()
 from config.crm_connection import get_access_token
 
 DYNAMICS_URL = os.getenv("DYNAMICS_URL", "").rstrip("/")
-BPF_ID       = "c4096776-49c9-40e8-a51b-0569d1bfef45"
 
 _token = {"value": None, "expires": 0}
 
@@ -39,52 +36,70 @@ def get_headers():
     }
 
 
-# ── Fetch stage IDs ────────────────────────────────────────────────────────────
-print("Fetching BPF stage IDs...")
+# ── Step 1: Find the statuscode options for Lead ───────────────────────────────
+print("Step 1: Reading lead statuscode options...")
 r = requests.get(
-    f"{DYNAMICS_URL}/api/data/v9.2/processstages",
+    f"{DYNAMICS_URL}/api/data/v9.2/EntityDefinitions(LogicalName='lead')"
+    f"/Attributes(LogicalName='statuscode')/Microsoft.Dynamics.CRM.StatusAttributeMetadata"
+    f"?$select=LogicalName&$expand=OptionSet",
     headers=get_headers(),
-    params={
-        "$select": "processstageid,stagename",
-        "$filter": f"_processid_value eq {BPF_ID}",
-    },
     timeout=30,
 )
 r.raise_for_status()
-stages = {s["stagename"].lower(): s["processstageid"] for s in r.json().get("value", [])}
-print(f"  Stages found: {list(stages.keys())}")
+options = r.json().get("OptionSet", {}).get("Options", [])
+print(f"  Found {len(options)} status options:")
+label_to_value = {}
+for o in options:
+    label = (o.get("Label", {}).get("UserLocalizedLabel") or {}).get("Label", "")
+    value = o.get("Value")
+    print(f"    [{value}] {label}")
+    if label:
+        label_to_value[label.lower()] = value
 
-new_stage_id        = stages.get("new")
-contacting_stage_id = stages.get("contacting")
-engaged_stage_id    = stages.get("engaged")
+contacting_value = label_to_value.get("contacting")
+engaged_value    = label_to_value.get("engaged")
 
-if not all([new_stage_id, contacting_stage_id, engaged_stage_id]):
-    print(f"ERROR: Could not find required stages. Got: {stages}")
+if contacting_value is None or engaged_value is None:
+    print()
+    print("  'Contacting' or 'Engaged' not found in statuscode options.")
+    print("  These values need to be added to the lead statuscode field first.")
+    print()
+    print("  To add them in Dynamics 365:")
+    print("    Settings → Customizations → Customize the System")
+    print("    → Entities → Lead → Fields → statuscode")
+    print("    → Add option 'Contacting' and 'Engaged' under Status Reason")
+    print("    → Publish")
+    print()
+    print("  Then re-run this script.")
     exit(1)
 
-print(f"  New:        {new_stage_id}")
-print(f"  Contacting: {contacting_stage_id}")
-print(f"  Engaged:    {engaged_stage_id}\n")
+print(f"\n  Contacting = {contacting_value}")
+print(f"  Engaged    = {engaged_value}\n")
 
 
-# ── Helper: check if a workflow with this name already exists ─────────────────
+# ── Step 2: Check if workflows already exist ───────────────────────────────────
 def workflow_exists(name):
     r = requests.get(
         f"{DYNAMICS_URL}/api/data/v9.2/workflows",
         headers=get_headers(),
-        params={"$select": "workflowid,name", "$filter": f"name eq '{name}'", "$top": 1},
+        params={
+            "$select": "workflowid,name",
+            "$filter": f"name eq '{name}'",
+            "$top": 1,
+        },
         timeout=30,
     )
     return bool(r.json().get("value"))
 
 
-# ── Helper: create + activate a workflow ──────────────────────────────────────
-def create_workflow(name, description, primary_entity, trigger_filter_xaml, update_xaml):
+# ── Step 3: Create + activate a workflow ───────────────────────────────────────
+def create_and_activate(name, description, primary_entity, statuscode_value):
     """
-    Creates a real-time workflow using XAML and activates it.
-    trigger_filter_xaml: condition XAML embedded in the trigger
-    update_xaml:         the UpdateEntity step XAML
+    Creates a real-time workflow on primary_entity that updates statuscode
+    on the regarding lead record.
     """
+    wf_id = str(uuid.uuid4())
+
     xaml = f"""<Activity
   x:Class="XrmWorkflow.{uuid.uuid4().hex}"
   xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
@@ -93,16 +108,28 @@ def create_workflow(name, description, primary_entity, trigger_filter_xaml, upda
   xmlns:mxwa="clr-namespace:Microsoft.Crm.Workflow.Activities;assembly=Microsoft.Crm.Workflow"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <mxa:Workflow>
-    {update_xaml}
+    <mxwa:UpdateEntityStep
+      EntityId="{{Binding Path=InputParameters[regardingobjectid]}}"
+      EntityName="lead">
+      <mxwa:UpdateEntityStep.UpdateAttributes>
+        <mxs:AttributeCollection>
+          <mxs:KeyValuePairOfstringobject>
+            <mxs:key>statuscode</mxs:key>
+            <mxs:value x:TypeArguments="x:Int32">{statuscode_value}</mxs:value>
+          </mxs:KeyValuePairOfstringobject>
+        </mxs:AttributeCollection>
+      </mxwa:UpdateEntityStep.UpdateAttributes>
+    </mxwa:UpdateEntityStep>
   </mxa:Workflow>
 </Activity>"""
 
     payload = {
+        "workflowid":      wf_id,
         "name":            name,
         "description":     description,
-        "category":        0,              # Workflow (not BPF)
-        "mode":            1,              # Real-time
-        "scope":           4,              # Organization
+        "category":        0,
+        "mode":            1,        # Real-time
+        "scope":           4,        # Organization
         "ondemand":        False,
         "triggeroncreate": True,
         "primaryentity":   primary_entity,
@@ -117,124 +144,81 @@ def create_workflow(name, description, primary_entity, trigger_filter_xaml, upda
         timeout=30,
     )
     if r.status_code not in (201, 204):
-        return None, f"{r.status_code}: {r.text[:300]}"
+        return None, f"{r.status_code}: {r.text[:400]}"
 
-    wf_id = r.headers.get("OData-EntityId", "").split("(")[-1].rstrip(")")
+    created_id = r.headers.get("OData-EntityId", "").split("(")[-1].rstrip(")")
+    if not created_id:
+        created_id = wf_id
+
+    time.sleep(2)
+
     # Activate
-    time.sleep(1)
     ra = requests.post(
         f"{DYNAMICS_URL}/api/data/v9.2/SetState",
         headers=get_headers(),
         json={
-            "EntityMoniker": {"@odata.type": "Microsoft.Dynamics.CRM.workflow", "workflowid": wf_id},
+            "EntityMoniker": {"@odata.type": "Microsoft.Dynamics.CRM.workflow", "workflowid": created_id},
             "State":  {"Value": 1},
             "Status": {"Value": 2},
         },
         timeout=30,
     )
-    return wf_id, None
+    if not (ra.ok or ra.status_code == 204):
+        return created_id, f"Created but activation failed: {ra.status_code}: {ra.text[:200]}"
+
+    return created_id, None
 
 
-# ── Workflow 1: Any activity logged on a New lead → Contacting ─────────────────
-WF1_NAME = "TYR - Lead: Activity Logged → Contacting"
-print(f"Workflow 1: {WF1_NAME}")
-
-if workflow_exists(WF1_NAME):
+# ── Workflow 1: Activity logged → Contacting ───────────────────────────────────
+WF1 = "TYR - Lead: Activity Logged → Contacting"
+print(f"Creating: {WF1}")
+if workflow_exists(WF1):
     print("  Already exists — skipping.\n")
 else:
-    # This workflow runs on activitypointer (parent of all activity types).
-    # It checks: regardingobjectid is a lead AND lead's current stage is New.
-    # Then patches the lead's stageid to Contacting.
-    update_xaml = f"""<mxwa:UpdateEntityStep
-      EntityId="{{Binding Path=InputParameters[regardingobjectid]}}"
-      EntityName="lead">
-      <mxwa:UpdateEntityStep.UpdateAttributes>
-        <mxs:AttributeCollection>
-          <mxs:KeyValuePairOfstringobject>
-            <mxs:key>stageid</mxs:key>
-            <mxs:value x:TypeArguments="x:String">{contacting_stage_id}</mxs:value>
-          </mxs:KeyValuePairOfstringobject>
-          <mxs:KeyValuePairOfstringobject>
-            <mxs:key>processid</mxs:key>
-            <mxs:value x:TypeArguments="x:String">{BPF_ID}</mxs:value>
-          </mxs:KeyValuePairOfstringobject>
-        </mxs:AttributeCollection>
-      </mxwa:UpdateEntityStep.UpdateAttributes>
-    </mxwa:UpdateEntityStep>"""
-
-    wf_id, err = create_workflow(
-        name=WF1_NAME,
-        description="When any activity is logged on a lead in the New stage, advance it to Contacting.",
+    wid, err = create_and_activate(
+        name=WF1,
+        description="When any activity is created regarding a lead, set lead status to Contacting.",
         primary_entity="activitypointer",
-        trigger_filter_xaml="",
-        update_xaml=update_xaml,
+        statuscode_value=contacting_value,
     )
     if err:
-        print(f"  ERROR: {err}")
-        print("  Falling back to Power Automate instructions (see below).\n")
+        print(f"  ERROR: {err}\n")
     else:
-        print(f"  Created & activated: {wf_id}\n")
+        print(f"  Created & activated ({wid})\n")
 
 
-# ── Workflow 2: Inbound email on a Contacting lead → Engaged ──────────────────
-WF2_NAME = "TYR - Lead: Email Reply Received → Engaged"
-print(f"Workflow 2: {WF2_NAME}")
-
-if workflow_exists(WF2_NAME):
+# ── Workflow 2: Inbound email → Engaged ───────────────────────────────────────
+WF2 = "TYR - Lead: Email Reply Received → Engaged"
+print(f"Creating: {WF2}")
+if workflow_exists(WF2):
     print("  Already exists — skipping.\n")
 else:
-    update_xaml = f"""<mxwa:UpdateEntityStep
-      EntityId="{{Binding Path=InputParameters[regardingobjectid]}}"
-      EntityName="lead">
-      <mxwa:UpdateEntityStep.UpdateAttributes>
-        <mxs:AttributeCollection>
-          <mxs:KeyValuePairOfstringobject>
-            <mxs:key>stageid</mxs:key>
-            <mxs:value x:TypeArguments="x:String">{engaged_stage_id}</mxs:value>
-          </mxs:KeyValuePairOfstringobject>
-          <mxs:KeyValuePairOfstringobject>
-            <mxs:key>processid</mxs:key>
-            <mxs:value x:TypeArguments="x:String">{BPF_ID}</mxs:value>
-          </mxs:KeyValuePairOfstringobject>
-        </mxs:AttributeCollection>
-      </mxwa:UpdateEntityStep.UpdateAttributes>
-    </mxwa:UpdateEntityStep>"""
-
-    wf_id, err = create_workflow(
-        name=WF2_NAME,
-        description="When an inbound email (reply from lead) is created on a lead in Contacting stage, advance it to Engaged.",
+    wid, err = create_and_activate(
+        name=WF2,
+        description="When an inbound email is created regarding a lead, set lead status to Engaged.",
         primary_entity="email",
-        trigger_filter_xaml="",
-        update_xaml=update_xaml,
+        statuscode_value=engaged_value,
     )
     if err:
-        print(f"  ERROR: {err}")
-        print("  Falling back to Power Automate instructions (see below).\n")
+        print(f"  ERROR: {err}\n")
     else:
-        print(f"  Created & activated: {wf_id}\n")
+        print(f"  Created & activated ({wid})\n")
 
 
 print("=" * 60)
 print("Done.")
 print()
-print("If either workflow errored, create them manually in Power Automate:")
+print("If workflows errored, build them in Power Automate instead:")
 print()
 print("FLOW 1 — Activity Logged → Contacting")
-print("  Trigger : When a row is added (activitypointer)")
-print("  Filter  : regardingobjecttypecode = lead")
-print("            AND lead._stageid_value = (New stage ID)")
-print(f"            New stage ID: {new_stage_id}")
-print("  Action  : Update a row (leads)")
-print(f"            stageid = {contacting_stage_id}  (Contacting)")
-print(f"            processid = {BPF_ID}")
+print("  Trigger : When a row is added → Table: Activities")
+print("  Condition: Regarding Object Type = lead")
+print(f"  Action  : Update a row → Table: Leads")
+print(f"            Status Reason = {contacting_value} (Contacting)")
 print()
 print("FLOW 2 — Email Reply → Engaged")
-print("  Trigger : When a row is added (email)")
-print("  Filter  : directioncode = Incoming (1)")
-print("            AND regardingobjecttypecode = lead")
-print("            AND lead._stageid_value = (Contacting stage ID)")
-print(f"            Contacting stage ID: {contacting_stage_id}")
-print("  Action  : Update a row (leads)")
-print(f"            stageid = {engaged_stage_id}  (Engaged)")
-print(f"            processid = {BPF_ID}")
+print("  Trigger : When a row is added → Table: Emails")
+print("  Condition: Direction = Incoming AND Regarding Object Type = lead")
+print(f"  Action  : Update a row → Table: Leads")
+print(f"            Status Reason = {engaged_value} (Engaged)")
 print("=" * 60)
