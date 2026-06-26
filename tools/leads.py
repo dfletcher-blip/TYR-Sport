@@ -416,6 +416,66 @@ def bulk_import_leads(file_path: str, preview_only: bool = True) -> dict:
     }
 
 
+def set_lead_bpf_stage(lead_id: str, stage_name: str) -> dict:
+    """
+    Advance a lead to a specific BPF stage on the Lead to Opportunity pipeline.
+
+    lead_id:    the unique ID of the lead
+    stage_name: one of "New", "Contacting", "Engaged", "Qualified", "Closed"
+    """
+    import requests, os, time
+    from config.crm_connection import get_access_token
+
+    DYNAMICS_URL = os.getenv("DYNAMICS_URL", "").rstrip("/")
+    BPF_ID       = "c4096776-49c9-40e8-a51b-0569d1bfef45"
+
+    token = get_access_token()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "OData-MaxVersion": "4.0",
+        "OData-Version":   "4.0",
+        "Accept":          "application/json",
+        "Content-Type":    "application/json",
+    }
+
+    # Look up the processstage ID for the requested stage name
+    r = requests.get(
+        f"{DYNAMICS_URL}/api/data/v9.2/processstages",
+        headers=headers,
+        params={
+            "$select": "processstageid,stagename",
+            "$filter": f"_processid_value eq {BPF_ID}",
+        },
+        timeout=30,
+    )
+    stages = {s["stagename"].lower(): s["processstageid"] for s in r.json().get("value", [])}
+    stage_id = stages.get(stage_name.lower())
+
+    if not stage_id:
+        return {
+            "success": False,
+            "error": f"Stage '{stage_name}' not found. Available: {list(stages.keys())}",
+        }
+
+    r = requests.patch(
+        f"{DYNAMICS_URL}/api/data/v9.2/leads({lead_id})",
+        headers={**headers, "If-Match": "*"},
+        json={
+            "processid@odata.bind": f"/workflows({BPF_ID})",
+            "stageid@odata.bind":   f"/processstages({stage_id})",
+        },
+        timeout=30,
+    )
+    if r.ok or r.status_code == 204:
+        return {
+            "success":    True,
+            "lead_id":    lead_id,
+            "stage":      stage_name,
+            "message":    f"Lead moved to '{stage_name}' stage.",
+        }
+    return {"success": False, "error": f"{r.status_code}: {r.text[:200]}"}
+
+
 def disqualify_lead(lead_id: str, reason: str = "Lost") -> dict:
     """
     Close/disqualify a lead — marks it as Closed at the end of the pipeline.

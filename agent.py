@@ -94,6 +94,7 @@ from tools.leads import (
     update_lead,
     qualify_lead,
     disqualify_lead,
+    set_lead_bpf_stage,
     get_lead_summary,
     find_stale_leads,
     bulk_import_leads,
@@ -232,6 +233,7 @@ TOOL_REGISTRY = {
     "update_lead":                 update_lead,
     "qualify_lead":                qualify_lead,
     "disqualify_lead":             disqualify_lead,
+    "set_lead_bpf_stage":          set_lead_bpf_stage,
     "get_lead_summary":            get_lead_summary,
     "find_stale_leads":            find_stale_leads,
     "bulk_import_leads":           bulk_import_leads,
@@ -710,6 +712,22 @@ TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {"lead_id": {"type": "string", "description": "The lead GUID to qualify"}},
             "required": ["lead_id"],
+        },
+    },
+    {
+        "name": "set_lead_bpf_stage",
+        "description": "Move a lead to a specific stage in the BPF pipeline: New, Contacting, Engaged, Qualified, or Closed.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_id":    {"type": "string", "description": "The lead GUID"},
+                "stage_name": {
+                    "type": "string",
+                    "enum": ["New", "Contacting", "Engaged", "Qualified", "Closed"],
+                    "description": "The stage to move the lead to",
+                },
+            },
+            "required": ["lead_id", "stage_name"],
         },
     },
     {
