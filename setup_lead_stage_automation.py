@@ -56,8 +56,15 @@ for o in options:
     if label:
         label_to_value[label.lower()] = value
 
-contacting_value = label_to_value.get("contacting")
-engaged_value    = label_to_value.get("engaged")
+# Match on prefix so "Contacting (2)" still matches "contacting"
+def find_value(keyword):
+    for lbl, val in label_to_value.items():
+        if lbl.startswith(keyword):
+            return val
+    return None
+
+contacting_value = find_value("contacting")
+engaged_value    = find_value("engaged")
 
 if contacting_value is None or engaged_value is None:
     print()
