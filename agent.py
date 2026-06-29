@@ -115,6 +115,11 @@ from tools.special_terms import (
     get_str_workflows,
     update_special_terms,
 )
+from tools.power_automate import (
+    list_flows,
+    create_lead_stage_flows,
+    create_lead_status_flow,
+)
 from tools.form_customization import (
     get_entity_form,
     list_entity_fields,
@@ -151,6 +156,7 @@ YOUR CAPABILITIES:
 11. EMAIL — Send emails to contacts or leads, send bulk emails, view email history
 12. SPECIAL TERMS (STR) — Search STR records, check pending approvals, find expiring agreements, view by account, manage approval workflows
 13. FORM CUSTOMIZATION — Add fields to entity forms, create custom fields (including dropdowns), inspect form layouts, publish changes
+15. POWER AUTOMATE — Create and list Power Automate flows that react to CRM events automatically (e.g. activity logged → update lead status)
 14. MEMORY — Read and update persistent CRM memory to remember field names, entity names, and CRM-specific facts across sessions
 
 HOW YOU WORK:
@@ -270,6 +276,11 @@ TOOL_REGISTRY = {
     "bulk_update_leads":           bulk_update_leads,
     "bulk_update_accounts":        bulk_update_accounts,
     "bulk_update_opportunities":   bulk_update_opportunities,
+
+    # Power Automate tools
+    "list_flows":                  list_flows,
+    "create_lead_stage_flows":     create_lead_stage_flows,
+    "create_lead_status_flow":     create_lead_status_flow,
 
     # Report tools
     "list_reports":                list_reports,
@@ -1037,6 +1048,51 @@ TOOL_DEFINITIONS = [
                 "preview_only": {"type": "boolean", "description": "If true, show matches without updating"},
             },
             "required": ["filter_criteria", "updates"],
+        },
+    },
+    # ── Power Automate ─────────────────────────────────────────
+    {
+        "name": "list_flows",
+        "description": "List all Power Automate flows in this environment.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "create_lead_stage_flows",
+        "description": (
+            "Create both lead stage automation flows in Power Automate: "
+            "(1) any activity logged on a lead → set status to Contacting, "
+            "(2) inbound email received on a lead → set status to Engaged. "
+            "Use this when the user wants automatic stage/status updates on leads."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contacting_status_value": {
+                    "type": "integer",
+                    "description": "The statuscode integer value for Contacting (e.g. 2)",
+                },
+                "engaged_status_value": {
+                    "type": "integer",
+                    "description": "The statuscode integer value for Engaged (e.g. 935650001)",
+                },
+            },
+            "required": ["contacting_status_value", "engaged_status_value"],
+        },
+    },
+    {
+        "name": "create_lead_status_flow",
+        "description": "Create a single Power Automate flow that updates a lead field when a new row is added to a Dataverse table.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "trigger_table":       {"type": "string", "description": "Dataverse table name e.g. 'activitypointers' or 'emails'"},
+                "trigger_description": {"type": "string", "description": "Human-readable description of the trigger"},
+                "status_field":        {"type": "string", "description": "Field on the lead to update e.g. 'statuscode'"},
+                "status_value":        {"type": "integer", "description": "Integer value to set on that field"},
+                "flow_name":           {"type": "string", "description": "Display name for the flow"},
+                "direction_filter":    {"type": "string", "description": "Optional: 'Incoming' to only trigger on inbound emails"},
+            },
+            "required": ["trigger_table", "trigger_description", "status_field", "status_value", "flow_name"],
         },
     },
     # ── Reports ────────────────────────────────────────────────
