@@ -256,39 +256,6 @@ def sync_last_activity_dates(entity: str, limit: int = 5000, preview_only: bool 
     except Exception as e:
         return {"error": f"Could not fetch activities: {e}"}
 
-    # Step 2b: Catch emails with no Regarding by querying activityparties
-    # Outreach often creates emails without Regarding set, but does add the
-    # contact/lead as a recipient party — this catches those orphaned emails.
-    try:
-        party_params = {
-            "$select": "activityid,_partyid_value,participationtypemask",
-            "$filter": "_partyid_value ne null",
-            "$orderby": "activityid desc",
-            "$top": 2000,
-        }
-        party_page = crm_get("activityparties", party_params)
-        parties = party_page.get("value", [])
-
-        while party_page.get("@odata.nextLink"):
-            party_page = crm_get(party_page["@odata.nextLink"], {})
-            parties.extend(party_page.get("value", []))
-
-        # Build map of activityid → createdon from activities we already fetched
-        activity_date_map = {a["activityid"]: (a.get("createdon") or "")[:10] for a in activities if a.get("activityid")}
-
-        for party in parties:
-            rid = party.get("_partyid_value")
-            if rid not in all_ids:
-                continue
-            act_id = party.get("activityid")
-            date_str = activity_date_map.get(act_id, "")
-            if not date_str:
-                continue
-            if rid not in latest_by_record or date_str > latest_by_record[rid]:
-                latest_by_record[rid] = date_str
-
-    except Exception:
-        pass  # activityparties pass is best-effort; don't fail the whole sync
 
     if preview_only:
         return {
