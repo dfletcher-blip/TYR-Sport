@@ -263,3 +263,103 @@ def get_contact_summary() -> dict:
         },
         "overall_health": "Good" if len(no_email) / total < 0.1 else "Needs Attention" if total else "No Data",
     }
+
+
+def sync_contact_owners_from_accounts(preview_only: bool = False, limit: int = 5000) -> dict:
+    """
+    Sync contact owners to match their parent account's owner.
+
+    For every active contact that has a parent account, if the contact's
+    owner differs from the account's owner, update the contact to match.
+
+    preview_only: if True, show what would change without writing anything
+    limit: max contacts to process (default 5000)
+    """
+    # Fetch all active contacts with their owner and parent account
+    try:
+        contacts = []
+        page = crm_get("contacts", {
+            "$select": "contactid,fullname,_ownerid_value,_parentcustomerid_value",
+            "$filter": "statecode eq 0 and _parentcustomerid_value ne null",
+            "$top": 2000,
+        })
+        contacts.extend(page.get("value", []))
+        while page.get("@odata.nextLink") and len(contacts) < limit:
+            page = crm_get(page["@odata.nextLink"], {})
+            contacts.extend(page.get("value", []))
+    except Exception as e:
+        return {"error": f"Could not fetch contacts: {e}"}
+
+    if not contacts:
+        return {"message": "No active contacts with a parent account found.", "count": 0}
+
+    # Collect unique account IDs and fetch their owners in bulk
+    account_ids = list({c["_parentcustomerid_value"] for c in contacts if c.get("_parentcustomerid_value")})
+
+    account_owner_map = {}  # account_id → owner_id
+    try:
+        # Fetch in batches of 100 using filter
+        batch_size = 100
+        for i in range(0, len(account_ids), batch_size):
+            batch = account_ids[i:i + batch_size]
+            filter_str = " or ".join(f"accountid eq '{aid}'" for aid in batch)
+            accts = crm_get("accounts", {
+                "$select": "accountid,_ownerid_value",
+                "$filter": filter_str,
+                "$top": batch_size,
+            }).get("value", [])
+            for a in accts:
+                account_owner_map[a["accountid"]] = a.get("_ownerid_value")
+    except Exception as e:
+        return {"error": f"Could not fetch account owners: {e}"}
+
+    # Find contacts where owner doesn't match their account's owner
+    to_update = []
+    for c in contacts:
+        acct_id = c.get("_parentcustomerid_value")
+        acct_owner = account_owner_map.get(acct_id)
+        contact_owner = c.get("_ownerid_value")
+        if acct_owner and acct_owner != contact_owner:
+            to_update.append({
+                "contactid": c["contactid"],
+                "name": c.get("fullname", ""),
+                "account_id": acct_id,
+                "new_owner_id": acct_owner,
+                "old_owner_id": contact_owner,
+            })
+
+    if preview_only or not to_update:
+        return {
+            "preview_only": preview_only,
+            "contacts_checked": len(contacts),
+            "contacts_to_update": len(to_update),
+            "changes": [
+                {"contact": r["name"], "new_owner_id": r["new_owner_id"], "old_owner_id": r["old_owner_id"]}
+                for r in to_update[:50]
+            ],
+            "message": (
+                f"{len(to_update)} contact(s) have a different owner than their account. "
+                + ("Set preview_only=False to apply." if preview_only else "No changes needed.")
+            ),
+        }
+
+    # Apply updates
+    updated = []
+    errors = []
+    for r in to_update:
+        try:
+            crm_patch("contacts", r["contactid"], {
+                "ownerid@odata.bind": f"/systemusers({r['new_owner_id']})"
+            })
+            updated.append(r["name"])
+        except Exception as e:
+            errors.append({"name": r["name"], "error": str(e)})
+
+    return {
+        "success": True,
+        "contacts_checked": len(contacts),
+        "updated": len(updated),
+        "errors": len(errors),
+        "error_details": errors,
+        "message": f"Updated {len(updated)} contact owner(s) to match their account. {len(errors)} error(s).",
+    }

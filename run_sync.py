@@ -21,6 +21,7 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(__file__))
 
 from tools.activity_date import sync_last_activity_dates
+from tools.contacts import sync_contact_owners_from_accounts
 
 LOG_FILE = os.path.join(os.path.dirname(__file__), "logs", "sync_activity_dates.log")
 
@@ -49,5 +50,16 @@ if __name__ == "__main__":
             log(f"  FATAL: {result['error']}")
         for err in (result.get("error_details") or [])[:5]:
             log(f"  ERROR: {err.get('name', '')} — {err.get('error', '')}")
+
+    log("Syncing contact owners from accounts...")
+    result = sync_contact_owners_from_accounts()
+    log(
+        f"  contact owners: {result.get('updated', 0)} updated, "
+        f"{result.get('errors', 0)} errors"
+    )
+    if result.get("error"):
+        log(f"  FATAL: {result['error']}")
+    for err in (result.get("error_details") or [])[:5]:
+        log(f"  ERROR: {err.get('name', '')} — {err.get('error', '')}")
 
     log("Sync complete.")
