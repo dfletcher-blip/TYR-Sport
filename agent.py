@@ -120,6 +120,14 @@ from tools.form_customization import (
     add_fields_to_form,
     create_custom_field,
 )
+from tools.activity_date import (
+    setup_last_activity_date_fields,
+    update_last_activity_date,
+    sync_last_activity_dates,
+    get_last_activity_date_status,
+    create_activity_date_workflows,
+    delete_broken_activity_date_workflows,
+)
 
 
 # ============================================================
@@ -149,14 +157,17 @@ YOUR CAPABILITIES:
 11. EMAIL — Send emails to contacts or leads, send bulk emails, view email history
 12. SPECIAL TERMS (STR) — Search STR records, check pending approvals, find expiring agreements, view by account, manage approval workflows
 13. FORM CUSTOMIZATION — Add fields to entity forms, create custom fields (including dropdowns), inspect form layouts, publish changes
+15. LAST ACTIVITY DATE — Create and maintain tyr_lastactivitydate on lead, contact, and account records; sync from activity history; report on field population
 14. MEMORY — Read and update persistent CRM memory to remember field names, entity names, and CRM-specific facts across sessions
 
 HOW YOU WORK:
+- ALWAYS call read_crm_memory() as your very first action every session before doing anything else — it tells you what fields, workflows, and facts already exist in this CRM so you don't repeat work or forget what was built
 - Always start by READING data before making any changes
 - Always EXPLAIN what you found before doing anything
 - For any UPDATE or CREATE action, state what you are about to do and why
 - After completing a task, give a clear SUMMARY of what was done
 - If something could cause problems, warn the user first
+- After successfully creating a field, workflow, or other persistent CRM object, ALWAYS call update_crm_memory to save the key facts so you remember them next session
 
 SAFETY RULES:
 - Never delete contacts without explicit permission
@@ -243,6 +254,14 @@ TOOL_REGISTRY = {
     "get_special_terms_summary":      get_special_terms_summary,
     "get_str_workflows":              get_str_workflows,
     "update_special_terms":           update_special_terms,
+
+    # Activity date tools
+    "setup_last_activity_date_fields":  setup_last_activity_date_fields,
+    "update_last_activity_date":        update_last_activity_date,
+    "sync_last_activity_dates":         sync_last_activity_dates,
+    "get_last_activity_date_status":    get_last_activity_date_status,
+    "create_activity_date_workflows":        create_activity_date_workflows,
+    "delete_broken_activity_date_workflows": delete_broken_activity_date_workflows,
 
     # Form customization tools
     "get_entity_form":                get_entity_form,
@@ -1093,18 +1112,104 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    # ── Last Activity Date ─────────────────────────────────────
+    {
+        "name": "setup_last_activity_date_fields",
+        "description": (
+            "Create the tyr_lastactivitydate (Date) custom field on lead, contact, and account, "
+            "then add it to each entity's main form. Run this once to set up the field. "
+            "After setup, use sync_last_activity_dates to populate historical data."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "add_to_form": {
+                    "type": "boolean",
+                    "description": "If true (default), adds the field to each entity's main form so users can see it in the CRM UI.",
+                },
+            },
+        },
+    },
+    {
+        "name": "update_last_activity_date",
+        "description": (
+            "Find the most recent completed activity linked to a single record and write its date "
+            "into the tyr_lastactivitydate field. Use this to refresh one record after a new activity."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "enum": ["lead", "contact", "account"], "description": "The entity type of the record"},
+                "record_id": {"type": "string", "description": "The GUID of the record to update"},
+            },
+            "required": ["entity", "record_id"],
+        },
+    },
+    {
+        "name": "sync_last_activity_dates",
+        "description": (
+            "Backfill tyr_lastactivitydate for all active records of an entity by looking up each "
+            "record's linked activities. Use preview_only=True first to confirm scope."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "enum": ["lead", "contact", "account"], "description": "Entity to sync"},
+                "limit": {"type": "integer", "description": "Max records to process (default 200)"},
+                "preview_only": {"type": "boolean", "description": "If true, show what would be updated without writing (default false)"},
+            },
+            "required": ["entity"],
+        },
+    },
+    {
+        "name": "get_last_activity_date_status",
+        "description": (
+            "Report on how many lead, contact, or account records have tyr_lastactivitydate populated "
+            "vs blank. Shows fill rate and lists records with no date so you know what needs syncing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "enum": ["lead", "contact", "account"], "description": "Entity to inspect"},
+                "limit": {"type": "integer", "description": "Max records to inspect (default 50)"},
+            },
+            "required": ["entity"],
+        },
+    },
+    {
+        "name": "create_activity_date_workflows",
+        "description": (
+            "Clean up broken 'Update Last Activity Date' workflows and return step-by-step "
+            "Power Automate instructions for setting up automatic Last Activity Date population. "
+            "The agent already auto-stamps the field when it sends emails — these instructions cover "
+            "activities logged by users directly in the CRM UI."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "delete_broken_activity_date_workflows",
+        "description": (
+            "CALL THIS TOOL when the user asks to delete the 'Update Last Activity Date' workflows "
+            "or clean up broken activity date workflows. "
+            "This tool directly deletes all workflows whose name contains 'Update Last Activity Date' "
+            "via the Dynamics 365 API — no manual steps needed. Do NOT use deactivate_workflow or "
+            "search_workflows for this task. Just call this tool."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
 ]
 
 
-def run_agent(user_request: str, dry_run: bool = False) -> str:
+def run_agent(user_request: str, dry_run: bool = False, session_messages: list = None) -> tuple:
     """
     Run the CRM agent with a plain English request.
 
     user_request: what you want the agent to do (plain English)
     dry_run: if True, Claude will plan actions but NOT execute writes
-             Use this to preview what the agent would do before committing.
+    session_messages: pass the list returned by a previous call to maintain
+                      conversation history within the same session
 
-    Returns Claude's response as a string.
+    Returns (response_text, updated_session_messages).
     """
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -1119,7 +1224,6 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
         except Exception:
             pass
 
-    # Add dry_run instruction if needed
     system = SYSTEM_PROMPT + memory_context
     if dry_run:
         system += (
@@ -1127,7 +1231,11 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
             "that create, update, or delete records. Instead, describe what you WOULD do."
         )
 
-    messages = [{"role": "user", "content": user_request}]
+    # Maintain conversation history across multiple requests in the same session
+    if session_messages is None:
+        session_messages = []
+
+    session_messages.append({"role": "user", "content": user_request})
 
     # Set up logging
     os.makedirs("logs", exist_ok=True)
@@ -1145,7 +1253,7 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
             max_tokens=8192,
             system=system,
             tools=TOOL_DEFINITIONS,
-            messages=messages,
+            messages=session_messages,
         )
 
         # Check if Claude is done (no more tools to call)
@@ -1157,11 +1265,14 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
                     final_text = block.text
                     break
 
+            # Append assistant reply to session history so next call remembers this exchange
+            session_messages.append({"role": "assistant", "content": final_text})
+
             # Save the log
             with open(log_file, "w") as f:
                 json.dump({"request": user_request, "actions": log_entries}, f, indent=2)
 
-            return final_text
+            return final_text, session_messages
 
         # Claude wants to use a tool — execute it
         if response.stop_reason == "tool_use":
@@ -1201,11 +1312,11 @@ def run_agent(user_request: str, dry_run: bool = False) -> str:
                     })
 
             # Feed the tool results back to Claude so it can continue
-            messages.append({"role": "assistant", "content": response.content})
-            messages.append({"role": "user", "content": tool_results})
+            session_messages.append({"role": "assistant", "content": response.content})
+            session_messages.append({"role": "user", "content": tool_results})
 
         else:
             # Unexpected stop reason — break the loop
             break
 
-    return "Task completed."
+    return "Task completed.", session_messages

@@ -8,7 +8,17 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from config.crm_connection import crm_get, crm_post, crm_action
+from datetime import date
+from config.crm_connection import crm_get, crm_post, crm_action, crm_patch
+
+_LAST_ACTIVITY_FIELD = "tyr_lastactivitydate"
+
+def _stamp_last_activity(entity_collection: str, record_id: str):
+    """Silently update tyr_lastactivitydate on a record. Swallows errors so it never blocks sends."""
+    try:
+        crm_patch(entity_collection, record_id, {_LAST_ACTIVITY_FIELD: date.today().isoformat()})
+    except Exception:
+        pass
 
 
 def send_email_to_contact(contact_id: str, subject: str, body: str) -> dict:
@@ -61,6 +71,7 @@ def send_email_to_contact(contact_id: str, subject: str, body: str) -> dict:
                 "email_address": email_address,
             }
 
+    _stamp_last_activity("contacts", contact_id)
     return {
         "success": True,
         "recipient": name,
@@ -115,6 +126,7 @@ def send_email_to_lead(lead_id: str, subject: str, body: str) -> dict:
                 "recipient": name,
             }
 
+    _stamp_last_activity("leads", lead_id)
     return {
         "success": True,
         "recipient": name,

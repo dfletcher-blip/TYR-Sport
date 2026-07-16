@@ -1,13 +1,11 @@
 {
   "_description": "Persistent memory for the TYR Sport CRM Agent. Edit this file to update what the agent knows about your CRM. The agent reads this at the start of every session.",
-
   "organization": {
     "name": "TYR Sport",
     "dynamics_url": "https://tyr.crm.dynamics.com",
     "primary_user": "Dillon Fletcher",
     "primary_user_email": "dfletcher@TYRsportoffice.onmicrosoft.com"
   },
-
   "key_fields": {
     "opportunity": {
       "stage": "tyr_stage",
@@ -22,7 +20,6 @@
       "notes": "Discover the correct entity API name at runtime using auto-discovery (tries tyr_specialterms, cr_specialterms, etc.)"
     }
   },
-
   "dashboards": {
     "notes": "Dashboards are created as personal userforms owned by primary_user_email. They appear under My Dashboards in the CRM immediately after creation.",
     "existing_system_dashboards": [
@@ -42,7 +39,6 @@
       "Opportunity Pipeline Dashboard"
     ]
   },
-
   "known_views": {
     "opportunity": [
       "Open Opportunities",
@@ -54,12 +50,30 @@
       "All Opportunities"
     ]
   },
-
   "agent_notes": [
-    "System dashboards created via API are NOT visible in the UCI app without manual app membership configuration — always use create_dashboard which creates personal userforms instead.",
-    "PublishAllXml succeeds but does NOT make system dashboards visible in the app — do not mislead the user about this.",
+    "System dashboards created via API are NOT visible in the UCI app without manual app membership configuration \u2014 always use create_dashboard which creates personal userforms instead.",
+    "PublishAllXml succeeds but does NOT make system dashboards visible in the app \u2014 do not mislead the user about this.",
     "The opportunity owner is retrieved via _ownerid_value field, not $expand ownerid.",
     "tyr_stage is the custom stage field for opportunities.",
-    "The user is on Anthropic Tier 1/2 — avoid making excessive tool calls in a single request to prevent 429 rate limit errors."
-  ]
+    "The user is on Anthropic Tier 1/2 \u2014 avoid making excessive tool calls in a single request to prevent 429 rate limit errors.",
+    "tyr_lastactivitydate (Last Activity Date) has been created on lead, contact, and account. It is auto-stamped on email send and can be synced with sync_last_activity_dates.",
+    "Always read CRM memory at the start of every session using read_crm_memory before answering questions about what fields or workflows exist."
+  ],
+  "custom_fields": {
+    "tyr_lastactivitydate": {
+      "display_name": "Last Activity Date",
+      "field_type": "DateOnly",
+      "entities": [
+        "lead",
+        "contact",
+        "account"
+      ],
+      "logical_name": "tyr_lastactivitydate",
+      "status": "created_and_on_form",
+      "notes": "Populated by update_last_activity_date / sync_last_activity_dates tools. Also auto-stamped when agent sends emails. Use create_activity_date_workflows to create D365 workflows for human-logged activities."
+    }
+  },
+  "agent_capabilities": {
+    "last_activity_date": "Tools: setup_last_activity_date_fields, update_last_activity_date, sync_last_activity_dates, get_last_activity_date_status, create_activity_date_workflows"
+  }
 }
