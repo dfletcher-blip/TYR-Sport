@@ -239,8 +239,9 @@ def sync_last_activity_dates(entity: str, limit: int = 5000, preview_only: bool 
             act_page = crm_get(act_page["@odata.nextLink"], {})
             batch = act_page.get("value", [])
             activities.extend(batch)
-            matched = sum(1 for a in activities if a.get("_regardingobjectid_value") in all_ids)
-            if matched >= len(all_ids):
+            # Exit early only when we've seen at least one activity for every record
+            matched_ids = {a.get("_regardingobjectid_value") for a in activities if a.get("_regardingobjectid_value") in all_ids}
+            if len(matched_ids) >= len(all_ids):
                 break
 
         for act in activities:
