@@ -12,7 +12,13 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from datetime import datetime, timezone
-from config.crm_connection import crm_get, crm_patch, crm_post, crm_action, crm_delete
+from config.crm_connection import crm_get, crm_patch, crm_post, crm_action, crm_delete, DYNAMICS_URL
+
+
+def _strip_base(url: str) -> str:
+    """Strip the D365 base URL so crm_get can re-add it when following nextLinks."""
+    prefix = f"{DYNAMICS_URL}/api/data/v9.2/"
+    return url[len(prefix):] if url.startswith(prefix) else url
 from tools.form_customization import create_custom_field, add_fields_to_form
 
 FIELD_LOGICAL_NAME = "tyr_lastactivitydate"
@@ -209,9 +215,8 @@ def sync_last_activity_dates(entity: str, limit: int = 5000, preview_only: bool 
         }
         page = crm_get(collection, page_params)
         record_pages.extend(page.get("value", []))
-        # Follow @odata.nextLink for paging
         while page.get("@odata.nextLink"):
-            page = crm_get(page["@odata.nextLink"], {})
+            page = crm_get(_strip_base(page["@odata.nextLink"]), {})
             record_pages.extend(page.get("value", []))
     except Exception as e:
         return {"error": f"Could not fetch {entity} records: {e}"}
@@ -236,7 +241,7 @@ def sync_last_activity_dates(entity: str, limit: int = 5000, preview_only: bool 
         activities = act_page.get("value", [])
 
         while act_page.get("@odata.nextLink"):
-            act_page = crm_get(act_page["@odata.nextLink"], {})
+            act_page = crm_get(_strip_base(act_page["@odata.nextLink"]), {})
             batch = act_page.get("value", [])
             activities.extend(batch)
             # Exit early only when we've seen at least one activity for every record

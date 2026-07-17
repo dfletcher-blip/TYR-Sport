@@ -54,9 +54,13 @@ if __name__ == "__main__":
     log("Syncing contact owners from accounts...")
     result = sync_contact_owners_from_accounts()
     log(
-        f"  contact owners: {result.get('updated', 0)} updated, "
-        f"{result.get('errors', 0)} errors"
+        f"  contact owners: {result.get('updated', result.get('contacts_to_update', 0))} updated, "
+        f"{result.get('errors', 0)} errors "
+        f"(checked {result.get('contacts_checked', 0)} contacts / {result.get('accounts_checked', 0)} accounts; "
+        f"null owners — contacts: {result.get('null_contact_owners', '?')}, accounts: {result.get('null_account_owners', '?')})"
     )
+    if result.get("message"):
+        log(f"  {result['message']}")
     if result.get("error"):
         log(f"  FATAL: {result['error']}")
     for err in (result.get("error_details") or [])[:5]:

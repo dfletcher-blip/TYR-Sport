@@ -275,36 +275,51 @@ def sync_contact_owners_from_accounts(preview_only: bool = False, limit: int = 5
     preview_only: if True, show what would change without writing anything
     limit: max contacts to process (default 5000)
     """
-    # Fetch all active contacts with their owner and parent account
+    # Fetch all active contacts with their owner and parent account.
+    # Select the navigation field name (without underscores) so D365 reliably
+    # returns the backing _value GUIDs in the response.
     try:
         contacts = []
         page = crm_get("contacts", {
-            "$select": "contactid,fullname,_ownerid_value,_parentcustomerid_value",
+            "$select": "contactid,fullname,ownerid,parentcustomerid",
             "$filter": "statecode eq 0 and _parentcustomerid_value ne null",
             "$top": 2000,
         })
         contacts.extend(page.get("value", []))
-        while page.get("@odata.nextLink") and len(contacts) < limit:
-            page = crm_get(page["@odata.nextLink"], {})
+        next_link = page.get("@odata.nextLink")
+        while next_link and len(contacts) < limit:
+            # nextLink is a full URL; strip the base so crm_get can prefix it
+            from config.crm_connection import DYNAMICS_URL
+            base_prefix = f"{DYNAMICS_URL}/api/data/v9.2/"
+            relative = next_link[len(base_prefix):] if next_link.startswith(base_prefix) else next_link
+            page = crm_get(relative, {})
             contacts.extend(page.get("value", []))
+            next_link = page.get("@odata.nextLink")
     except Exception as e:
         return {"error": f"Could not fetch contacts: {e}"}
 
     if not contacts:
         return {"message": "No active contacts with a parent account found.", "count": 0}
 
+    # Pull owner GUIDs — D365 returns them as _ownerid_value / _parentcustomerid_value
+    # regardless of whether we selected "ownerid" or "_ownerid_value".
+    def _owner(record):
+        return record.get("_ownerid_value")
+
+    def _parent_acct(record):
+        return record.get("_parentcustomerid_value")
+
     # Collect unique account IDs and fetch their owners in bulk
-    account_ids = list({c["_parentcustomerid_value"] for c in contacts if c.get("_parentcustomerid_value")})
+    account_ids = list({_parent_acct(c) for c in contacts if _parent_acct(c)})
 
     account_owner_map = {}  # account_id → owner_id
     try:
-        # Fetch in batches of 100 using filter
         batch_size = 100
         for i in range(0, len(account_ids), batch_size):
             batch = account_ids[i:i + batch_size]
             filter_str = " or ".join(f"accountid eq '{aid}'" for aid in batch)
             accts = crm_get("accounts", {
-                "$select": "accountid,_ownerid_value",
+                "$select": "accountid,ownerid",
                 "$filter": filter_str,
                 "$top": batch_size,
             }).get("value", [])
@@ -313,12 +328,16 @@ def sync_contact_owners_from_accounts(preview_only: bool = False, limit: int = 5
     except Exception as e:
         return {"error": f"Could not fetch account owners: {e}"}
 
+    # Diagnostic: count how many contacts/accounts have null owners
+    null_contact_owners = sum(1 for c in contacts if not _owner(c))
+    null_acct_owners = sum(1 for aid in account_ids if not account_owner_map.get(aid))
+
     # Find contacts where owner doesn't match their account's owner
     to_update = []
     for c in contacts:
-        acct_id = c.get("_parentcustomerid_value")
+        acct_id = _parent_acct(c)
         acct_owner = account_owner_map.get(acct_id)
-        contact_owner = c.get("_ownerid_value")
+        contact_owner = _owner(c)
         if acct_owner and acct_owner != contact_owner:
             to_update.append({
                 "contactid": c["contactid"],
@@ -332,13 +351,18 @@ def sync_contact_owners_from_accounts(preview_only: bool = False, limit: int = 5
         return {
             "preview_only": preview_only,
             "contacts_checked": len(contacts),
+            "accounts_checked": len(account_ids),
             "contacts_to_update": len(to_update),
+            "null_contact_owners": null_contact_owners,
+            "null_account_owners": null_acct_owners,
             "changes": [
                 {"contact": r["name"], "new_owner_id": r["new_owner_id"], "old_owner_id": r["old_owner_id"]}
                 for r in to_update[:50]
             ],
             "message": (
+                f"Checked {len(contacts)} contacts against {len(account_ids)} accounts. "
                 f"{len(to_update)} contact(s) have a different owner than their account. "
+                f"({null_contact_owners} contacts with null owner, {null_acct_owners} accounts with null owner.) "
                 + ("Set preview_only=False to apply." if preview_only else "No changes needed.")
             ),
         }
@@ -358,8 +382,11 @@ def sync_contact_owners_from_accounts(preview_only: bool = False, limit: int = 5
     return {
         "success": True,
         "contacts_checked": len(contacts),
+        "accounts_checked": len(account_ids),
         "updated": len(updated),
         "errors": len(errors),
         "error_details": errors,
+        "null_contact_owners": null_contact_owners,
+        "null_account_owners": null_acct_owners,
         "message": f"Updated {len(updated)} contact owner(s) to match their account. {len(errors)} error(s).",
     }
