@@ -281,7 +281,7 @@ def sync_contact_owners_from_accounts(preview_only: bool = False, limit: int = 5
     try:
         contacts = []
         page = crm_get("contacts", {
-            "$select": "contactid,fullname,ownerid,parentcustomerid",
+            "$select": "contactid,fullname,_ownerid_value,_parentcustomerid_value",
             "$filter": "statecode eq 0 and _parentcustomerid_value ne null",
             "$top": 2000,
         })
@@ -319,7 +319,7 @@ def sync_contact_owners_from_accounts(preview_only: bool = False, limit: int = 5
             batch = account_ids[i:i + batch_size]
             filter_str = " or ".join(f"accountid eq '{aid}'" for aid in batch)
             accts = crm_get("accounts", {
-                "$select": "accountid,ownerid",
+                "$select": "accountid,_ownerid_value",
                 "$filter": filter_str,
                 "$top": batch_size,
             }).get("value", [])
@@ -347,6 +347,17 @@ def sync_contact_owners_from_accounts(preview_only: bool = False, limit: int = 5
                 "old_owner_id": contact_owner,
             })
 
+    # Sample of first 3 contacts for diagnostics
+    sample = [
+        {
+            "name": c.get("fullname", ""),
+            "contact_owner": _owner(c),
+            "account_owner": account_owner_map.get(_parent_acct(c)),
+            "match": _owner(c) == account_owner_map.get(_parent_acct(c)),
+        }
+        for c in contacts[:3]
+    ]
+
     if preview_only or not to_update:
         return {
             "preview_only": preview_only,
@@ -355,6 +366,7 @@ def sync_contact_owners_from_accounts(preview_only: bool = False, limit: int = 5
             "contacts_to_update": len(to_update),
             "null_contact_owners": null_contact_owners,
             "null_account_owners": null_acct_owners,
+            "sample_comparisons": sample,
             "changes": [
                 {"contact": r["name"], "new_owner_id": r["new_owner_id"], "old_owner_id": r["old_owner_id"]}
                 for r in to_update[:50]
