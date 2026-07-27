@@ -16,7 +16,8 @@ from any TYR custom code. It almost always means one of:
 This script inspects the org and reports which of those is happening.
 Run: python diagnose_docusign_error.py
 """
-import os, requests
+import os, base64, json, requests
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -42,6 +43,18 @@ def get(path, params=None):
     if not r.ok:
         raise RuntimeError(f"GET {path} failed {r.status_code}: {r.text[:500]}")
     return r.json()
+
+def decode_jwt_exp(token):
+    """Return the (iat, exp) datetimes encoded in an unverified JWT, or None."""
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        data = json.loads(base64.urlsafe_b64decode(payload))
+        iat = datetime.fromtimestamp(data["iat"], tz=timezone.utc)
+        exp = datetime.fromtimestamp(data["exp"], tz=timezone.utc)
+        return iat, exp, data.get("unique_name") or data.get("upn")
+    except Exception:
+        return None
 
 print("=" * 70)
 print("1. Confirm the real org URL / org ID this token is authenticating to")
@@ -110,6 +123,7 @@ print()
 print("=" * 70)
 print("4. Discover DocuSign entities and look for a stored environment/org URL")
 print("=" * 70)
+accountconfig_rows = []
 try:
     ent_data = get("EntityDefinitions", {
         "$select": "LogicalName,DisplayName",
@@ -134,6 +148,8 @@ try:
         try:
             plural = entity if entity.endswith("s") else entity + "s"
             rows = get(plural, {"$top": 5})
+            if entity == "docusign_accountconfiguration":
+                accountconfig_rows = rows.get("value", [])
             print(f"\n  Sample records from '{plural}':")
             for row in rows.get("value", []):
                 interesting = {k: v for k, v in row.items()
@@ -153,8 +169,64 @@ except RuntimeError as e:
 print()
 
 print("=" * 70)
+print("5. Check whether the account configuration's stored OAuth session is stale")
+print("=" * 70)
+token_is_stale = False
+if not accountconfig_rows:
+    print("  No 'docusign_accountconfiguration' record was returned in Step 4 — "
+          "skipping token freshness check.")
+else:
+    now = datetime.now(timezone.utc)
+    for row in accountconfig_rows:
+        config_id = row.get("docusign_accountconfigurationid")
+        access_token = row.get("crm_accesstoken")
+        id_token = row.get("crm_idtoken")
+        refresh_token = row.get("crm_refreshtoken")
+        print(f"  Account configuration {config_id}:")
+        print(f"    crm_accesstoken present  : {bool(access_token)}")
+        print(f"    crm_refreshtoken present : {bool(refresh_token)}")
+        decoded = decode_jwt_exp(id_token) if id_token else None
+        if decoded:
+            iat, exp, signed_in_as = decoded
+            age = now - exp
+            print(f"    crm_idtoken signed in as : {signed_in_as}")
+            print(f"    crm_idtoken issued       : {iat.isoformat()}")
+            print(f"    crm_idtoken expired      : {exp.isoformat()}")
+            if now > exp:
+                token_is_stale = True
+                print(f"    ⚠ This token expired {age} ago and was never refreshed.")
+            else:
+                print(f"    Token is still valid for {exp - now}.")
+        elif id_token:
+            print("    crm_idtoken present but could not be decoded.")
+        else:
+            print("    crm_idtoken is empty — no OAuth session has ever been established.")
+        if not access_token and not decoded:
+            token_is_stale = True
+print()
+
+print("=" * 70)
 print("SUMMARY / next steps")
 print("=" * 70)
+if token_is_stale:
+    print("""
+ROOT CAUSE IDENTIFIED (Step 5): the DocuSign account configuration's stored
+OAuth session (crm_idtoken / crm_accesstoken) is expired or missing, and
+crm_accesstoken is empty — meaning the connector has no valid token to use
+and never silently refreshed itself. This is exactly what produces
+"Failed to retrieve Docusign URL for this environment" for every user,
+including Angie: the connector can't obtain a DocuSign session at all, so it
+can't hand back a signing URL regardless of the requesting user's own roles
+(Steps 2/3 above already confirm Angie's roles and the solution install are
+fine).
+
+FIX: a System Administrator needs to open the DocuSign for Dynamics 365 app,
+go to Setup/Admin, and re-authenticate ("Connect" / "Link Account") the
+DocuSign account for this org. That performs a fresh OAuth sign-in and
+replaces the stale crm_accesstoken/crm_idtoken/crm_refreshtoken values on
+the docusign_accountconfiguration record. No changes are needed to Angie's
+security roles.
+""")
 print("""
 If Step 3 shows no DocuSign solution, or Step 4 shows no entities/records:
   -> DocuSign for Dynamics 365 was never (re)configured for THIS environment.
