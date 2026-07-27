@@ -152,10 +152,24 @@ try:
                 accountconfig_rows = rows.get("value", [])
             print(f"\n  Sample records from '{plural}':")
             for row in rows.get("value", []):
-                interesting = {k: v for k, v in row.items()
-                                if not k.startswith("@") and
-                                any(x in k.lower() for x in
-                                    ["url", "environment", "org", "instance", "account", "token", "auth"])}
+                interesting = {}
+                for k, v in row.items():
+                    if k.startswith("@"):
+                        continue
+                    lk = k.lower()
+                    if not any(x in lk for x in
+                               ["url", "environment", "org", "instance", "account", "token", "auth"]):
+                        continue
+                    # Never print raw token/secret values, or URLs that may embed
+                    # one as a query parameter (e.g. DocuSign's configuration
+                    # endpoint response embeds a live refreshToken=...).
+                    if isinstance(v, str) and (
+                        any(s in lk for s in ["token", "secret", "password"]) or
+                        "token=" in v.lower()
+                    ):
+                        interesting[k] = f"<redacted, len={len(v)}>" if v else "<empty>"
+                    else:
+                        interesting[k] = v
                 print(f"    {interesting}")
         except RuntimeError as e:
             print(f"    Could not read '{entity}': {e}")
