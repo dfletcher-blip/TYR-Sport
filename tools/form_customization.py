@@ -165,6 +165,113 @@ def get_optionset_values(entity: str, field_name: str) -> dict:
     }
 
 
+def _get_optionset_metadata(entity: str, field_name: str) -> dict:
+    """
+    Fetch option set metadata for a field, trying single-select (Picklist)
+    then multi-select (MultiSelectPicklist) — Account's tyr_tyrtype, for
+    example, is a MultiSelectPicklist while Contact's is a plain Picklist.
+    """
+    for cast in ("PicklistAttributeMetadata", "MultiSelectPicklistAttributeMetadata"):
+        try:
+            meta = crm_get(
+                f"EntityDefinitions(LogicalName='{entity}')/Attributes(LogicalName='{field_name}')"
+                f"/Microsoft.Dynamics.CRM.{cast}",
+                {"$select": "LogicalName", "$expand": "OptionSet"},
+            )
+        except Exception:
+            continue
+        option_set = meta.get("OptionSet")
+        if option_set:
+            return {"cast": cast, "option_set": option_set}
+    raise ValueError(f"'{field_name}' on '{entity}' is not a picklist or multi-select picklist field")
+
+
+def add_optionset_value(entity: str, field_name: str, labels: list) -> dict:
+    """
+    Add one or more new dropdown options to an EXISTING option set field
+    (single- or multi-select picklist), without disturbing the options
+    already there. Use this — not create_custom_field — when the field
+    already exists and you just need new choices on it (e.g. adding a new
+    business type). Skips any label that's already present. Publishes
+    automatically when it adds anything.
+
+    entity: e.g. "lead", "account"
+    field_name: the logical field name, e.g. "tyr_tyrtype"
+    labels: list of new option labels to add, e.g. ["HYROX", "Run Club"]
+    """
+    try:
+        info = _get_optionset_metadata(entity, field_name)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    option_set = info["option_set"]
+    is_global = bool(option_set.get("IsGlobal"))
+    optionset_name = option_set.get("Name")
+    options = option_set.get("Options", [])
+
+    existing_labels = set()
+    existing_values = set()
+    for opt in options:
+        lls = (opt.get("Label") or {}).get("UserLocalizedLabel") or {}
+        existing_labels.add(lls.get("Label", "").strip().lower())
+        existing_values.add(opt.get("Value"))
+
+    next_value = (max(existing_values) + 1) if existing_values else 100000000
+
+    added, skipped, failed = [], [], []
+
+    for label in labels:
+        if label.strip().lower() in existing_labels:
+            skipped.append(label)
+            continue
+
+        value = next_value
+        next_value += 1
+
+        body = {
+            "Value": value,
+            "Label": {
+                "@odata.type": "Microsoft.Dynamics.CRM.Label",
+                "LocalizedLabels": [{
+                    "@odata.type": "Microsoft.Dynamics.CRM.LocalizedLabel",
+                    "Label": label,
+                    "LanguageCode": 1033,
+                }],
+                "UserLocalizedLabel": {
+                    "@odata.type": "Microsoft.Dynamics.CRM.LocalizedLabel",
+                    "Label": label,
+                    "LanguageCode": 1033,
+                },
+            },
+            "SolutionUniqueName": "Default",
+        }
+        if is_global:
+            body["OptionSetName"] = optionset_name
+        else:
+            body["EntityLogicalName"] = entity
+            body["AttributeLogicalName"] = field_name
+
+        try:
+            crm_action("InsertOptionValue", body)
+            added.append({"label": label, "value": value})
+            existing_labels.add(label.strip().lower())
+        except Exception as e:
+            failed.append({"label": label, "error": str(e)[:300]})
+
+    if added:
+        _publish(entity)
+
+    return {
+        "entity": entity,
+        "field": field_name,
+        "optionset_name": optionset_name,
+        "is_global": is_global,
+        "added": added,
+        "skipped_existing": skipped,
+        "failed": failed,
+    }
+
+
 def add_fields_to_form(entity: str, fields: list, section_label: str = "Details") -> dict:
     """
     Add one or more fields to an entity's main form.

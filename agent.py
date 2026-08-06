@@ -117,6 +117,7 @@ from tools.form_customization import (
     get_entity_form,
     list_entity_fields,
     get_optionset_values,
+    add_optionset_value,
     add_fields_to_form,
     create_custom_field,
 )
@@ -248,6 +249,7 @@ TOOL_REGISTRY = {
     "get_entity_form":                get_entity_form,
     "list_entity_fields":             list_entity_fields,
     "get_optionset_values":           get_optionset_values,
+    "add_optionset_value":            add_optionset_value,
     "add_fields_to_form":             add_fields_to_form,
     "create_custom_field":            create_custom_field,
 
@@ -857,6 +859,19 @@ TOOL_DEFINITIONS = [
                 "field_name": {"type": "string", "description": "Logical field name, e.g. 'tyr_tyrtype'"},
             },
             "required": ["entity", "field_name"],
+        },
+    },
+    {
+        "name": "add_optionset_value",
+        "description": "Add one or more new dropdown options to an EXISTING option set field (single- or multi-select picklist) without touching the options already there. Use this — not create_custom_field — when the field already exists and you just need new choices on it, e.g. adding a new business type to tyr_tyrtype. Already-existing labels are skipped automatically. Publishes automatically.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "description": "Entity name, e.g. 'lead', 'account'"},
+                "field_name": {"type": "string", "description": "Logical field name, e.g. 'tyr_tyrtype'"},
+                "labels": {"type": "array", "items": {"type": "string"}, "description": "New option labels to add, e.g. ['HYROX', 'Run Club']"},
+            },
+            "required": ["entity", "field_name", "labels"],
         },
     },
     {
