@@ -112,7 +112,7 @@ def queue_name(q):
     return raw.get("name", "?") if isinstance(raw, dict) else q.get("name", "?")
 
 def find_str_entity():
-    """Auto-discover the Special Terms entity API name."""
+    """Auto-discover the Special Terms entity API name (mirrors tools/special_terms.py)."""
     candidates = ["tyr_specialterms", "tyr_specialterm", "cr_specialterms",
                   "cr_specialterm", "new_specialterms", "new_specialterm",
                   "tyr_strs", "tyr_str"]
@@ -123,21 +123,47 @@ def find_str_entity():
                 return name
         except RuntimeError:
             continue
+
+    # Fallback: search entity metadata for a display name matching "special term".
+    # Some orgs don't support contains() in $filter, so pull display names and
+    # filter client-side instead of relying on a server-side contains() filter.
+    try:
+        meta = get("EntityDefinitions", {
+            "$select": "LogicalCollectionName,DisplayName",
+            "$filter": "IsCustomEntity eq true",
+        })
+        for e in meta.get("value", []):
+            label = ((e.get("DisplayName") or {}).get("UserLocalizedLabel") or {}).get("Label", "")
+            if "special term" in label.lower():
+                name = e.get("LogicalCollectionName", "")
+                if name:
+                    return name
+    except RuntimeError as e:
+        print(f"  (entity metadata lookup failed: {e})")
     return None
 
 def get_approval_workflows(entities):
-    """Find active/draft approval-related workflows for the given entities."""
+    """
+    Find approval-related workflows for the given entities.
+
+    This org's 'workflows' entity rejects the contains() OData function
+    (501 'function not supported'), so filter server-side only on fields
+    that support eq (primaryentity, category), and match the name keyword
+    client-side in Python instead.
+    """
     results = {}
     for entity in entities:
         try:
             data = get("workflows", {
                 "$select": "workflowid,name,statecode,statuscode,primaryentity",
-                "$filter": (
-                    f"primaryentity eq '{entity}' and category eq 0 and "
-                    f"(contains(tolower(name),'approval') or contains(tolower(name),'finance'))"
-                ),
+                "$filter": f"primaryentity eq '{entity}' and category eq 0",
             })
-            results[entity] = data.get("value", [])
+            all_wf = data.get("value", [])
+            results[entity] = [
+                w for w in all_wf
+                if "approval" in w.get("name", "").lower()
+                or "finance" in w.get("name", "").lower()
+            ]
         except RuntimeError as e:
             print(f"  (workflow lookup for '{entity}' failed: {e})")
             results[entity] = []
