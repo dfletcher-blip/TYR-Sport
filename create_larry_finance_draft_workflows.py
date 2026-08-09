@@ -1,4 +1,24 @@
 """
+CONFIRMED NON-FUNCTIONAL — DO NOT RE-RUN without reading this first.
+
+Running this against the live org (2026-08-09) returned, for both
+workflows:
+
+    0x80045040 NonCrmUIWorkflowsNotSupported: "This workflow cannot be
+    created, updated or published because it was created outside the
+    Microsoft Dynamics 365 Web application. Your organization does not
+    allow this type of workflow."
+
+This is a Dataverse platform-level policy block, not an XAML content
+error — this org has classic Workflow creation locked to the Dynamics
+web UI only. No amount of XAML correction will get past it; it is
+rejected before the content is evaluated. Build the Lead/Special Terms
+Finance-routing workflows in the classic Workflow designer (Settings >
+Processes) or as a Power Automate flow instead — see the step-by-step
+spec provided alongside this script.
+
+--- Original attempt notes below, kept for reference ---
+
 EXPERIMENTAL — create DRAFT classic Dynamics Workflows that route Larry
 Meltzer's Lead and Special Terms submissions to the Finance team.
 
