@@ -112,35 +112,27 @@ def queue_name(q):
     return raw.get("name", "?") if isinstance(raw, dict) else q.get("name", "?")
 
 def find_str_entity():
-    """Auto-discover the Special Terms entity API name (mirrors tools/special_terms.py)."""
-    candidates = ["tyr_specialterms", "tyr_specialterm", "cr_specialterms",
-                  "cr_specialterm", "new_specialterms", "new_specialterm",
-                  "tyr_strs", "tyr_str"]
-    for name in candidates:
-        try:
-            r = get(name, {"$top": 1, "$select": "createdon"})
-            if "value" in r:
-                return name
-        except RuntimeError:
-            continue
+    """
+    Discover the Special Terms entity via metadata. Dynamics stores two
+    different names for a custom entity: the singular LogicalName (used by
+    workflows.primaryentity) and the pluralized LogicalCollectionName (used
+    in record URLs, e.g. tyr_specialterms -> tyr_specialtermses). Using the
+    collection name where the logical name is expected causes a 400.
 
-    # Fallback: search entity metadata for a display name matching "special term".
-    # Some orgs don't support contains() in $filter, so pull display names and
-    # filter client-side instead of relying on a server-side contains() filter.
+    Returns (collection_name, logical_name), or (None, None) if not found.
+    """
     try:
         meta = get("EntityDefinitions", {
-            "$select": "LogicalCollectionName,DisplayName",
+            "$select": "LogicalName,LogicalCollectionName,DisplayName",
             "$filter": "IsCustomEntity eq true",
         })
         for e in meta.get("value", []):
             label = ((e.get("DisplayName") or {}).get("UserLocalizedLabel") or {}).get("Label", "")
             if "special term" in label.lower():
-                name = e.get("LogicalCollectionName", "")
-                if name:
-                    return name
+                return e.get("LogicalCollectionName", ""), e.get("LogicalName", "")
     except RuntimeError as e:
         print(f"  (entity metadata lookup failed: {e})")
-    return None
+    return None, None
 
 def get_approval_workflows(entities):
     """
@@ -226,8 +218,12 @@ for q in queues_to_add:
 print()
 
 # ── Check the Lead + Special Terms approval workflows exist and are active ──
-str_entity = find_str_entity()
-entities_to_check = ["lead"] + ([str_entity] if str_entity else [])
+str_collection, str_logical = find_str_entity()
+if str_logical:
+    print(f"Special Terms entity: logical name '{str_logical}' (records at '{str_collection}')")
+else:
+    print("Could not auto-discover the Special Terms entity from metadata.")
+entities_to_check = ["lead"] + ([str_logical] if str_logical else [])
 print(f"Checking approval workflows for: {', '.join(entities_to_check)}...")
 workflows_by_entity = get_approval_workflows(entities_to_check)
 inactive_found = []
