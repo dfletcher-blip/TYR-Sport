@@ -134,34 +134,35 @@ def find_str_entity():
         print(f"  (entity metadata lookup failed: {e})")
     return None, None
 
-def get_approval_workflows(entities):
-    """
-    Find approval-related workflows for the given entities.
+CATEGORY_LABELS = {0: "Workflow", 1: "Dialog", 2: "BusinessRule", 3: "Action",
+                    4: "BusinessProcessFlow", 5: "ModernFlow", 6: "CustomApi"}
+STATUS_LABELS = {(1, 2): "Active", (0, 1): "Draft", (0, 3): "Inactive"}
 
-    This org's 'workflows' entity rejects the contains() OData function
-    (501 'function not supported'), so filter server-side only on fields
-    that support eq (primaryentity, category), and match the name keyword
-    client-side in Python instead.
+def get_processes_for_entity(entities):
+    """
+    Find ALL process definitions on the given entities — classic Workflows,
+    Business Process Flows, Power Automate (Modern) Flows, Business Rules,
+    everything. This org's repo has migrate_leads_bpf.py / migrate_opps_bpf.py,
+    meaning stage/approval logic here likely lives in a BPF rather than a
+    classic Workflow (category 0), so don't filter by category — just by
+    entity — and let the caller judge by name/category which one is relevant.
+
+    Also, this org's 'workflows' entity rejects the contains() OData function
+    (501 'function not supported'), so filter server-side only on the
+    eq-supported 'primaryentity' field.
     """
     results = {}
     for entity in entities:
         try:
             data = get("workflows", {
-                "$select": "workflowid,name,statecode,statuscode,primaryentity",
-                "$filter": f"primaryentity eq '{entity}' and category eq 0",
+                "$select": "workflowid,name,statecode,statuscode,primaryentity,category",
+                "$filter": f"primaryentity eq '{entity}'",
             })
-            all_wf = data.get("value", [])
-            results[entity] = [
-                w for w in all_wf
-                if "approval" in w.get("name", "").lower()
-                or "finance" in w.get("name", "").lower()
-            ]
+            results[entity] = data.get("value", [])
         except RuntimeError as e:
-            print(f"  (workflow lookup for '{entity}' failed: {e})")
+            print(f"  (process lookup for '{entity}' failed: {e})")
             results[entity] = []
     return results
-
-STATUS_LABELS = {(1, 2): "Active", (0, 1): "Draft", (0, 3): "Inactive"}
 
 # ── Look up Larry ───────────────────────────────────────────────────────────
 print("Looking up user...")
@@ -224,18 +225,22 @@ if str_logical:
 else:
     print("Could not auto-discover the Special Terms entity from metadata.")
 entities_to_check = ["lead"] + ([str_logical] if str_logical else [])
-print(f"Checking approval workflows for: {', '.join(entities_to_check)}...")
-workflows_by_entity = get_approval_workflows(entities_to_check)
+print(f"Checking all processes on: {', '.join(entities_to_check)}...")
+processes_by_entity = get_processes_for_entity(entities_to_check)
 inactive_found = []
-for entity, wfs in workflows_by_entity.items():
-    if not wfs:
-        print(f"  {entity}: no approval-named workflow found — Finance routing may not be automated for this entity.")
+for entity, procs in processes_by_entity.items():
+    if not procs:
+        print(f"  {entity}: no processes found at all on this entity.")
         continue
-    for w in wfs:
-        label = STATUS_LABELS.get((w.get("statecode"), w.get("statuscode")), "Unknown")
-        print(f"  {entity}: '{w['name']}' — {label}")
-        if label != "Active":
-            inactive_found.append(w)
+    for p in procs:
+        cat = CATEGORY_LABELS.get(p.get("category"), f"Unknown({p.get('category')})")
+        label = STATUS_LABELS.get((p.get("statecode"), p.get("statuscode")), "Unknown")
+        name_lower = p.get("name", "").lower()
+        is_approval_related = "approval" in name_lower or "finance" in name_lower
+        flag = "  <-- approval/finance keyword match" if is_approval_related else ""
+        print(f"  {entity}: [{cat}] '{p['name']}' — {label}{flag}")
+        if is_approval_related and label != "Active":
+            inactive_found.append(p)
 print()
 
 if inactive_found:
