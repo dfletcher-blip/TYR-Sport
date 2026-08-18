@@ -92,6 +92,10 @@ for a in approval_fields:
         for o in options:
             label = ((o.get("Label") or {}).get("UserLocalizedLabel") or {}).get("Label", "")
             print(f"    {o.get('Value')} = {label}")
+        if not options:
+            # Still nothing — dump the top-level keys so we can see the
+            # actual response shape instead of guessing a third location.
+            print(f"    (no options found — response top-level keys: {list(detail.keys())})")
     except RuntimeError as e:
         print(f"    ! Option set lookup failed: {e}")
     print()
@@ -123,7 +127,11 @@ print("=" * 60)
 print(f"3. Lead matching '{LEAD_SEARCH}'")
 print("=" * 60)
 try:
-    approval_field_names = ",".join(a["LogicalName"] for a in approval_fields) if approval_fields else ""
+    # 'Virtual' type attributes (e.g. *name shadow fields for lookups/picklists)
+    # aren't directly selectable — the base field's formatted-value annotation
+    # already gives us the human-readable label, so skip them here.
+    selectable_fields = [a for a in approval_fields if a.get("AttributeType") != "Virtual"]
+    approval_field_names = ",".join(a["LogicalName"] for a in selectable_fields) if selectable_fields else ""
     select = "leadid,fullname,companyname,statecode,_ownerid_value" + (f",{approval_field_names}" if approval_field_names else "")
     data = get("leads", {
         "$select": select,
@@ -141,7 +149,7 @@ try:
         owner_id = l.get("_ownerid_value")
         owner_name = l.get("_ownerid_value@OData.Community.Display.V1.FormattedValue")
         print(f"    Owner: {owner_name} ({owner_id})")
-        for a in approval_fields:
+        for a in selectable_fields:
             fld = a["LogicalName"]
             val = l.get(fld)
             formatted = l.get(f"{fld}@OData.Community.Display.V1.FormattedValue")
