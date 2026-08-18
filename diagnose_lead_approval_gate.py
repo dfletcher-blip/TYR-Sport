@@ -86,7 +86,9 @@ for a in approval_fields:
     print(f"Option set values for '{logical}':")
     try:
         detail = get(f"EntityDefinitions(LogicalName='lead')/Attributes(LogicalName='{logical}')/Microsoft.Dynamics.CRM.{CAST_TYPE[a['AttributeType']]}")
-        options = ((detail.get("OptionSet") or {}).get("Options")) or []
+        # Could be a local OptionSet or a shared/global one (GlobalOptionSet) — check both.
+        options = ((detail.get("OptionSet") or {}).get("Options")) or \
+                  ((detail.get("GlobalOptionSet") or {}).get("Options")) or []
         for o in options:
             label = ((o.get("Label") or {}).get("UserLocalizedLabel") or {}).get("Label", "")
             print(f"    {o.get('Value')} = {label}")
@@ -126,16 +128,19 @@ try:
     data = get("leads", {
         "$select": select,
         "$filter": f"contains(fullname,'{LEAD_SEARCH}')",
-        "$expand": "ownerid($select=fullname,systemuserid)",
         "$top": 5,
     })
+    # NOTE: no $expand on ownerid — it's a polymorphic lookup (user or team)
+    # and Web API rejects $select=fullname against the abstract 'principal'
+    # type. Read the owner name from the formatted-value annotation instead.
     leads = data.get("value", [])
     if not leads:
         print(f"  No lead found matching '{LEAD_SEARCH}'")
     for l in leads:
         print(f"  {l.get('fullname')} ({l.get('companyname')}) — {l.get('leadid')}")
-        owner = l.get("ownerid") or {}
-        print(f"    Owner: {owner.get('fullname')}")
+        owner_id = l.get("_ownerid_value")
+        owner_name = l.get("_ownerid_value@OData.Community.Display.V1.FormattedValue")
+        print(f"    Owner: {owner_name} ({owner_id})")
         for a in approval_fields:
             fld = a["LogicalName"]
             val = l.get(fld)
@@ -143,15 +148,19 @@ try:
             print(f"    {fld}: {formatted if formatted is not None else val}")
         print()
 
-        # Owner's manager, in case Approver is meant to auto-populate from the hierarchy
-        owner_id = owner.get("systemuserid")
+        # Owner's manager, in case Approver is meant to auto-populate from the
+        # hierarchy. Only meaningful if the owner is a user, not a team —
+        # if this 404s, the lead is probably team-owned.
         if owner_id:
-            mgr_data = get(f"systemusers({owner_id})", {
-                "$select": "fullname",
-                "$expand": "parentsystemuserid($select=fullname,systemuserid)",
-            })
-            mgr = mgr_data.get("parentsystemuserid")
-            print(f"    Owner's manager: {mgr.get('fullname') if mgr else '(none set)'}")
+            try:
+                mgr_data = get(f"systemusers({owner_id})", {
+                    "$select": "fullname",
+                    "$expand": "parentsystemuserid($select=fullname,systemuserid)",
+                })
+                mgr = mgr_data.get("parentsystemuserid")
+                print(f"    Owner's manager: {mgr.get('fullname') if mgr else '(none set)'}")
+            except RuntimeError as e:
+                print(f"    ! Owner manager lookup failed (owner may be a team, not a user): {e}")
 except RuntimeError as e:
     print(f"  ! Lead lookup failed: {e}")
 print()
