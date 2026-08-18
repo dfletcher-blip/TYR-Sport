@@ -113,9 +113,10 @@ def find_entity_privilege(entity_logical_name, access_right):
     name string. Returns (privilege_id, can_be_deep, can_be_local) or
     (None, None, None) if not found.
     """
-    data = get(f"EntityDefinitions(LogicalName='{entity_logical_name}')/Privileges", {
-        "$select": "privilegeid,name,privilegetype,canbedeep,canbelocal,canbeglobal,canbebasic",
-    })
+    # Privileges is a complex-type navigation property on this org's Dataverse
+    # version — it rejects $select/$filter ("query parameters not supported
+    # on complex type"), so fetch it plain and filter client-side instead.
+    data = get(f"EntityDefinitions(LogicalName='{entity_logical_name}')/Privileges")
     for p in data.get("value", []):
         if p.get("privilegetype") == access_right:
             return p.get("privilegeid"), p.get("canbedeep"), p.get("canbelocal")
