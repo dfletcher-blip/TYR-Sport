@@ -85,8 +85,13 @@ for a in approval_fields:
     logical = a.get("LogicalName")
     print(f"Option set values for '{logical}':")
     try:
-        detail = get(f"EntityDefinitions(LogicalName='lead')/Attributes(LogicalName='{logical}')/Microsoft.Dynamics.CRM.{CAST_TYPE[a['AttributeType']]}")
-        # Could be a local OptionSet or a shared/global one (GlobalOptionSet) — check both.
+        # OptionSet/GlobalOptionSet aren't included by default on this org's
+        # single-record metadata GET (confirmed — the raw response had
+        # neither key) — must be explicitly expanded.
+        detail = get(
+            f"EntityDefinitions(LogicalName='lead')/Attributes(LogicalName='{logical}')/Microsoft.Dynamics.CRM.{CAST_TYPE[a['AttributeType']]}",
+            {"$expand": "OptionSet,GlobalOptionSet"},
+        )
         options = ((detail.get("OptionSet") or {}).get("Options")) or \
                   ((detail.get("GlobalOptionSet") or {}).get("Options")) or []
         for o in options:
@@ -129,9 +134,13 @@ print("=" * 60)
 try:
     # 'Virtual' type attributes (e.g. *name shadow fields for lookups/picklists)
     # aren't directly selectable — the base field's formatted-value annotation
-    # already gives us the human-readable label, so skip them here.
+    # already gives us the human-readable label, so skip them here. Lookup
+    # fields must be selected as _<logicalname>_value, not the bare name
+    # (that's what caused the previous 400 on tyr_approvedby).
     selectable_fields = [a for a in approval_fields if a.get("AttributeType") != "Virtual"]
-    approval_field_names = ",".join(a["LogicalName"] for a in selectable_fields) if selectable_fields else ""
+    def select_name(a):
+        return f"_{a['LogicalName']}_value" if a.get("AttributeType") == "Lookup" else a["LogicalName"]
+    approval_field_names = ",".join(select_name(a) for a in selectable_fields) if selectable_fields else ""
     select = "leadid,fullname,companyname,statecode,_ownerid_value" + (f",{approval_field_names}" if approval_field_names else "")
     data = get("leads", {
         "$select": select,
@@ -150,10 +159,10 @@ try:
         owner_name = l.get("_ownerid_value@OData.Community.Display.V1.FormattedValue")
         print(f"    Owner: {owner_name} ({owner_id})")
         for a in selectable_fields:
-            fld = a["LogicalName"]
+            fld = select_name(a)
             val = l.get(fld)
             formatted = l.get(f"{fld}@OData.Community.Display.V1.FormattedValue")
-            print(f"    {fld}: {formatted if formatted is not None else val}")
+            print(f"    {a['LogicalName']}: {formatted if formatted is not None else val}")
         print()
 
         # Owner's manager, in case Approver is meant to auto-populate from the
