@@ -1,5 +1,6 @@
 """
-Grant Marina Preiss, Angela Nicolletta, and Caroline Kulp:
+Grant Marina Preiss, Angela Nicolletta, Caroline Kulp, Dillon Fletcher,
+Dan Macquarrie, and Michael Galindo:
   - Account: Create (create their own accounts)
   - Contact: Create, Write, Append (convert a Lead to a Contact, then edit it)
   - Account: AppendTo (allow a Contact to be linked/associated to an Account)
@@ -8,9 +9,10 @@ Grant Marina Preiss, Angela Nicolletta, and Caroline Kulp:
 Rather than editing whatever security role these users currently have
 (which likely covers other people too), this creates ONE new, minimal
 role containing exactly these privileges at Basic (User/own-records)
-depth, and assigns it to all three users. Existing roles/privileges are
-untouched. Safe to re-run — it looks up the role and each user's
-assignment by name/id first and skips anything already in place.
+depth, and assigns it to all users listed in TARGET_USERS. Existing
+roles/privileges are untouched. Safe to re-run — it looks up the role
+and each user's assignment by name/id first and skips anything already
+in place, so re-running for users already assigned is a no-op for them.
 
 This assumes each user already has baseline Read access to Account,
 Contact, and Lead via their current role(s) — those are listed below so
@@ -30,7 +32,10 @@ from config.crm_connection import get_access_token
 DYNAMICS_URL = os.getenv("DYNAMICS_URL", "").rstrip("/")
 DRY_RUN = "--dry-run" in sys.argv
 
-TARGET_USERS = ["Marina Preiss", "Angela Nicolletta", "Caroline Kulp"]
+TARGET_USERS = [
+    "Marina Preiss", "Angela Nicolletta", "Caroline Kulp",
+    "Dillon Fletcher", "Dan Macquarrie", "Michael Galindo",
+]
 NEW_ROLE_NAME = "Create Account and Convert Lead to Contact"
 DEPTH = "Basic"
 
