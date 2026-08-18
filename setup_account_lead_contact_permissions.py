@@ -1,6 +1,6 @@
 """
 Grant Marina Preiss, Angela Nicolletta, Caroline Kulp, Dillon Fletcher,
-Dan Macquarrie, and Michael Galindo:
+and Dan Macquarrie:
   - Account: Create (create their own accounts)
   - Contact: Create, Write, Append (convert a Lead to a Contact, then edit it)
   - Account: AppendTo (allow a Contact to be linked/associated to an Account)
@@ -34,8 +34,10 @@ DRY_RUN = "--dry-run" in sys.argv
 
 TARGET_USERS = [
     "Marina Preiss", "Angela Nicolletta", "Caroline Kulp",
-    "Dillon Fletcher", "Dan Macquarrie", "Michael Galindo",
+    "Dillon Fletcher", "Dan Macquarrie",
 ]
+# Michael Galindo intentionally excluded for now — hold off on any
+# permission changes for him until asked to resume.
 NEW_ROLE_NAME = "Create Account and Convert Lead to Contact"
 DEPTH = "Basic"
 
