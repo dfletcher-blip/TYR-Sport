@@ -132,12 +132,13 @@ print("=" * 60)
 print(f"3. Lead matching '{LEAD_SEARCH}'")
 print("=" * 60)
 try:
-    # 'Virtual' type attributes (e.g. *name shadow fields for lookups/picklists)
-    # aren't directly selectable — the base field's formatted-value annotation
-    # already gives us the human-readable label, so skip them here. Lookup
-    # fields must be selected as _<logicalname>_value, not the bare name
-    # (that's what caused the previous 400 on tyr_approvedby).
-    selectable_fields = [a for a in approval_fields if a.get("AttributeType") != "Virtual"]
+    # Only Picklist/Lookup are directly selectable and are what we actually
+    # need (tyr_approvalstatus, tyr_approvedby). The 'approv'-matched String/
+    # Virtual fields are internal lookup-shadow columns (*name, *yominame)
+    # that show up in metadata but aren't valid Web API select columns on
+    # this org, and aren't needed for this diagnosis anyway. Lookup fields
+    # must be selected as _<logicalname>_value, not the bare name.
+    selectable_fields = [a for a in approval_fields if a.get("AttributeType") in ("Picklist", "Lookup")]
     def select_name(a):
         return f"_{a['LogicalName']}_value" if a.get("AttributeType") == "Lookup" else a["LogicalName"]
     approval_field_names = ",".join(select_name(a) for a in selectable_fields) if selectable_fields else ""
