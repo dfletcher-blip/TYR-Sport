@@ -116,21 +116,51 @@ print("=" * 60)
 print("3. Recent emails with 'finance' in the subject (last 5)")
 print("=" * 60)
 try:
+    # contains() isn't supported on this org (same issue hit earlier this
+    # session on other entities) -- fetch recent emails and filter client-side.
     data = get("emails", {
         "$select": "activityid,subject,createdon,_regardingobjectid_value",
-        "$filter": "contains(tolower(subject),'finance')",
         "$orderby": "createdon desc",
-        "$top": 5,
+        "$top": 100,
     })
-    emails = data.get("value", [])
+    emails = [e for e in data.get("value", []) if "finance" in (e.get("subject") or "").lower()][:5]
     if not emails:
-        print("  No emails found with 'finance' in the subject.")
+        print("  No emails found with 'finance' in the subject (checked last 100 emails).")
     for e in emails:
         regarding_name = e.get("_regardingobjectid_value@OData.Community.Display.V1.FormattedValue")
         print(f"  \"{e.get('subject')}\" -- {e.get('createdon')}")
         print(f"    Regarding: {regarding_name} ({e.get('_regardingobjectid_value')})")
 except RuntimeError as e:
     print(f"  ! Email lookup failed: {e}")
+print()
+
+# ── 4. ALL Modern Flows (Power Automate) org-wide, any entity ────────────────
+# The email came from crmadmin@tyr.com with a typo -- looks like a Power
+# Automate "Send an email" action, not a native Dynamics workflow email.
+# The earlier full dump on the Lead entity found zero Modern Flows, so this
+# flow may not be tagged with primaryentity='lead' the way we'd expect.
+# List every Modern Flow (category 5) in the org regardless of entity/tag.
+print("=" * 60)
+print("4. All Power Automate flows (category 5) in the org")
+print("=" * 60)
+try:
+    data = get("workflows", {
+        "$select": "workflowid,name,primaryentity,statecode,statuscode,category",
+        "$filter": "category eq 5",
+    })
+    flows = data.get("value", [])
+    if not flows:
+        print("  No Modern Flows found in this org at all.")
+    STATUS_LABELS = {(1, 2): "Active", (0, 1): "Draft", (0, 3): "Inactive"}
+    for f in flows:
+        label = STATUS_LABELS.get((f.get("statecode"), f.get("statuscode")), "Unknown")
+        flag = ""
+        name_lower = (f.get("name") or "").lower()
+        if any(k in name_lower for k in ("lead", "financ", "qualif", "approv", "convert")):
+            flag = "  <-- name matches lead/finance/qualify/approve/convert"
+        print(f"  [{f.get('primaryentity') or '(no entity)'}] {f.get('name')} -- {label}{flag}")
+except RuntimeError as e:
+    print(f"  ! Flow lookup failed: {e}")
 print()
 
 print("Done. This is read-only -- nothing was changed.")
