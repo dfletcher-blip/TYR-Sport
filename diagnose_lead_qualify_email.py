@@ -1,24 +1,25 @@
 """
-Read-only diagnostic: find what's actually sending the "lead is in the
-hands of finance" email on Lead qualification.
+Diagnostic: find what's sending a "with Finance" email when a Lead is
+marked Qualified via the new Convert to Contact button
+(tyr_convertLeadToContact.js).
 
-Dillon reported this email still fires when using the new Convert to
-Contact button -- even though that flow never touches tyr_approvalstatus
-or the Submit For Approval process at all. That means the email is most
-likely triggered by the Lead's state change to Qualified itself (which
-our script does set via statuscode/statecode), not by the approval
-field -- via a mechanism our earlier searches didn't check:
-  1. Plugins (server-side C# code registered on Lead update/setstate) --
-     invisible to the 'workflows' table searches used earlier.
-  2. Power Automate flows registered with a different trigger shape than
-     what we searched for before.
+That JS never touches tyr_approvalstatus and never calls Submit For
+Approval -- it only sets the Lead's native statecode/statuscode to
+Qualified via Xrm.WebApi.updateRecord. If an email still fires, something
+else in this org is reacting to that native state change directly.
 
-Makes NO changes. Safe to run any time.
+The likely mechanism is a PLUGIN (compiled .NET code registered on the
+Lead's Update message), which lives in the sdkmessageprocessingstep
+table -- a completely different place than the classic Workflows/BPFs/
+Flows (the 'workflows' table) that were checked earlier this session,
+which is why nothing showed up in those earlier searches.
+
+Read-only. Makes no changes.
 
 Usage:
     python diagnose_lead_qualify_email.py
 """
-import os, time, requests
+import sys, os, time, requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from dotenv import load_dotenv
@@ -55,71 +56,81 @@ def get(path, params=None):
         raise RuntimeError(f"GET {path} failed {r.status_code}: {r.text[:500]}")
     return r.json()
 
-# ── 1. Modern Flows (Power Automate) on Lead, any trigger shape ─────────────
+# ── 1. Plugin steps registered on Lead's Update message ─────────────────────
 print("=" * 60)
-print("1. All 'workflows' rows tied to lead (any category, no filter)")
-print("=" * 60)
-try:
-    data = get("workflows", {
-        "$select": "workflowid,name,statecode,statuscode,category,primaryentity",
-        "$filter": "primaryentity eq 'lead'",
-    })
-    for w in data.get("value", []):
-        cat_labels = {0: "Workflow", 1: "Dialog", 2: "BusinessRule", 3: "Action",
-                      4: "BPF", 5: "ModernFlow", 6: "CustomApi"}
-        cat = cat_labels.get(w.get("category"), str(w.get("category")))
-        print(f"  [{cat}] {w['name']} — statecode={w.get('statecode')} statuscode={w.get('statuscode')}")
-except RuntimeError as e:
-    print(f"  ! failed: {e}")
-print()
-
-# ── 2. Plugin steps registered on Lead ───────────────────────────────────────
-print("=" * 60)
-print("2. Plugin steps (sdkmessageprocessingstep) registered on lead")
+print("1. Plugin steps (sdkmessageprocessingstep) on Lead Update")
 print("=" * 60)
 try:
     data = get("sdkmessageprocessingsteps", {
-        "$select": "sdkmessageprocessingstepid,name,stage,mode,statuscode,rank",
-        "$filter": "primaryobjecttypecode eq 'lead'",
-        "$expand": "sdkmessageid($select=name),plugintypeid($select=typename,assemblyname)",
+        "$select": "sdkmessageprocessingstepid,name,stage,mode,statecode,filteringattributes,rank",
+        "$filter": "sdkmessageid/name eq 'Update' and sdkmessagefilterid/primaryobjecttypecode eq 'lead'",
+        "$expand": "eventhandler_plugintypeid($select=typename,assemblyname)",
     })
     steps = data.get("value", [])
     if not steps:
-        print("  No plugin steps found on lead.")
+        print("  No plugin steps found registered on Lead Update.")
     for s in steps:
-        msg = (s.get("sdkmessageid") or {}).get("name", "?")
-        plugin = s.get("plugintypeid") or {}
-        stage_labels = {10: "PreValidation", 20: "PreOperation", 40: "PostOperation"}
-        mode_labels = {0: "Synchronous", 1: "Asynchronous"}
-        status_labels = {0: "Active", 1: "Inactive"}
+        plugin = s.get("eventhandler_plugintypeid") or {}
+        state_label = "Active" if s.get("statecode") == 0 else "Inactive"
         print(f"  {s.get('name')}")
-        print(f"    Message: {msg}  Stage: {stage_labels.get(s.get('stage'), s.get('stage'))}"
-              f"  Mode: {mode_labels.get(s.get('mode'), s.get('mode'))}"
-              f"  Status: {status_labels.get(s.get('statuscode'), s.get('statuscode'))}")
-        print(f"    Plugin type: {plugin.get('typename', '?')}  Assembly: {plugin.get('assemblyname', '?')}")
+        print(f"    Plugin: {plugin.get('typename')} ({plugin.get('assemblyname')})")
+        print(f"    Stage: {s.get('stage')}  Mode: {s.get('mode')}  State: {state_label}")
+        print(f"    Filtering attributes: {s.get('filteringattributes')}")
         print()
 except RuntimeError as e:
-    print(f"  ! failed: {e}")
+    print(f"  ! Query failed: {e}")
+    print("  Trying without $expand (in case that navigation property name is wrong here)...")
+    try:
+        data = get("sdkmessageprocessingsteps", {
+            "$select": "sdkmessageprocessingstepid,name,stage,mode,statecode,filteringattributes,rank",
+            "$filter": "sdkmessageid/name eq 'Update' and sdkmessagefilterid/primaryobjecttypecode eq 'lead'",
+        })
+        steps = data.get("value", [])
+        if not steps:
+            print("  No plugin steps found registered on Lead Update.")
+        for s in steps:
+            state_label = "Active" if s.get("statecode") == 0 else "Inactive"
+            print(f"  {s.get('name')} -- stage={s.get('stage')} mode={s.get('mode')} state={state_label}")
+            print(f"    Filtering attributes: {s.get('filteringattributes')}")
+    except RuntimeError as e2:
+        print(f"  ! Fallback also failed: {e2}")
 print()
 
-# ── 3. Email templates mentioning 'finance' ──────────────────────────────────
+# ── 2. Email templates mentioning Finance ────────────────────────────────────
 print("=" * 60)
-print("3. Email templates with 'finance' in the name or subject")
+print("2. Email templates with 'finance' in the title")
 print("=" * 60)
 try:
-    data = get("templates", {
-        "$select": "templateid,title,subject,templatetypecode",
-    })
-    matches = [t for t in data.get("value", [])
-               if "finance" in (t.get("title") or "").lower()
-               or "finance" in (t.get("subject") or "").lower()]
+    data = get("templates", {"$select": "templateid,title,languagecode"})
+    matches = [t for t in data.get("value", []) if "finance" in (t.get("title") or "").lower()]
     if not matches:
-        print("  No matching templates found.")
+        print("  No email templates with 'finance' in the title.")
     for t in matches:
-        print(f"  {t.get('title')}  (entity: {t.get('templatetypecode')})")
-        subj = t.get("subject") or ""
-        print(f"    Subject: {subj[:200]}")
+        print(f"  {t.get('title')} -- {t.get('templateid')}")
 except RuntimeError as e:
-    print(f"  ! failed: {e}")
+    print(f"  ! Template lookup failed: {e}")
 print()
+
+# ── 3. Recent 'Finance' emails, to see what's actually being sent ───────────
+print("=" * 60)
+print("3. Recent emails with 'finance' in the subject (last 5)")
+print("=" * 60)
+try:
+    data = get("emails", {
+        "$select": "activityid,subject,createdon,_regardingobjectid_value",
+        "$filter": "contains(tolower(subject),'finance')",
+        "$orderby": "createdon desc",
+        "$top": 5,
+    })
+    emails = data.get("value", [])
+    if not emails:
+        print("  No emails found with 'finance' in the subject.")
+    for e in emails:
+        regarding_name = e.get("_regardingobjectid_value@OData.Community.Display.V1.FormattedValue")
+        print(f"  \"{e.get('subject')}\" -- {e.get('createdon')}")
+        print(f"    Regarding: {regarding_name} ({e.get('_regardingobjectid_value')})")
+except RuntimeError as e:
+    print(f"  ! Email lookup failed: {e}")
+print()
+
 print("Done. This is read-only -- nothing was changed.")
