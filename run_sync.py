@@ -32,7 +32,7 @@ def log(msg: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{timestamp}] {msg}"
     print(line)
-    with open(LOG_FILE, "a") as f:
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(line + "\n")
 
 
@@ -69,7 +69,7 @@ if __name__ == "__main__":
     for err in (result.get("error_details") or [])[:5]:
         log(f"  ERROR: {err.get('name', '')} — {err.get('error', '')}")
 
-    log("Syncing lead statuses (New → Contacting)...")
+    log("Syncing lead statuses (New -> Contacting)...")
     result = sync_lead_statuses()
     log(
         f"  lead status: {result.get('updated', 0)} advanced to Contacting, "
