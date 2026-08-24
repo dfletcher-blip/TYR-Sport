@@ -452,3 +452,148 @@ def find_stale_leads(days_inactive: int = 14) -> dict:
             for l in leads
         ],
     }
+
+
+def sync_lead_statuses(preview_only: bool = False, limit: int = 5000) -> dict:
+    """
+    Automatically advance lead status from New → Contacting when the lead
+    has at least one activity linked to it (email, call, task, etc.).
+
+    preview_only: if True, show what would change without writing anything
+    limit: max leads to process (default 5000)
+    """
+    # Step 1: Resolve the statuscode value for "Contacting" from D365 metadata
+    contacting_code = None
+    try:
+        meta = crm_get(
+            "EntityDefinitions(LogicalName='lead')/Attributes(LogicalName='statuscode')"
+            "/Microsoft.Dynamics.CRM.StatusAttributeMetadata?$select=LogicalName"
+            "&$expand=OptionSet($select=Options)",
+            {},
+        )
+        options = (meta.get("OptionSet") or {}).get("Options", [])
+        for opt in options:
+            label = (opt.get("Label") or {}).get("UserLocalizedLabel") or {}
+            label_text = label.get("Label", "")
+            if "contacting" in label_text.lower():
+                contacting_code = opt.get("Value")
+                break
+    except Exception as e:
+        return {"error": f"Could not fetch lead status options: {e}"}
+
+    if contacting_code is None:
+        # Fall back to listing all options so the caller can see what's available
+        try:
+            meta = crm_get(
+                "EntityDefinitions(LogicalName='lead')/Attributes(LogicalName='statuscode')"
+                "/Microsoft.Dynamics.CRM.StatusAttributeMetadata?$select=LogicalName"
+                "&$expand=OptionSet($select=Options)",
+                {},
+            )
+            options = (meta.get("OptionSet") or {}).get("Options", [])
+            available = [
+                {
+                    "value": o.get("Value"),
+                    "label": ((o.get("Label") or {}).get("UserLocalizedLabel") or {}).get("Label", ""),
+                }
+                for o in options
+            ]
+        except Exception:
+            available = []
+        return {
+            "error": "Could not find a 'Contacting' option in the lead statuscode field.",
+            "available_options": available,
+            "hint": "Pass the correct statuscode value to sync_lead_statuses(contacting_code=X).",
+        }
+
+    # Step 2: Fetch all open leads currently in "New" status (statuscode=1)
+    try:
+        leads = []
+        page = crm_get("leads", {
+            "$select": "leadid,fullname,statuscode",
+            "$filter": "statecode eq 0 and statuscode eq 1",
+            "$top": 2000,
+        })
+        leads.extend(page.get("value", []))
+        from config.crm_connection import DYNAMICS_URL
+        next_link = page.get("@odata.nextLink")
+        while next_link and len(leads) < limit:
+            prefix = f"{DYNAMICS_URL}/api/data/v9.2/"
+            relative = next_link[len(prefix):] if next_link.startswith(prefix) else next_link
+            page = crm_get(relative, {})
+            leads.extend(page.get("value", []))
+            next_link = page.get("@odata.nextLink")
+    except Exception as e:
+        return {"error": f"Could not fetch leads: {e}"}
+
+    if not leads:
+        return {"message": "No leads currently in New status.", "updated": 0}
+
+    all_lead_ids = {l["leadid"] for l in leads}
+    lead_map = {l["leadid"]: l.get("fullname", "") for l in leads}
+
+    # Step 3: Bulk-fetch activities linked to any of these leads
+    leads_with_activity = set()
+    try:
+        act_page = crm_get("activitypointers", {
+            "$select": "activityid,_regardingobjectid_value",
+            "$filter": "_regardingobjectid_value ne null",
+            "$orderby": "createdon desc",
+            "$top": 2000,
+        })
+        activities = act_page.get("value", [])
+        for a in activities:
+            rid = a.get("_regardingobjectid_value")
+            if rid in all_lead_ids:
+                leads_with_activity.add(rid)
+
+        prefix = f"{DYNAMICS_URL}/api/data/v9.2/"
+        next_link = act_page.get("@odata.nextLink")
+        while next_link and len(leads_with_activity) < len(all_lead_ids):
+            relative = next_link[len(prefix):] if next_link.startswith(prefix) else next_link
+            act_page = crm_get(relative, {})
+            for a in act_page.get("value", []):
+                rid = a.get("_regardingobjectid_value")
+                if rid in all_lead_ids:
+                    leads_with_activity.add(rid)
+            next_link = act_page.get("@odata.nextLink")
+    except Exception as e:
+        return {"error": f"Could not fetch activities: {e}"}
+
+    to_update = list(leads_with_activity)
+
+    if preview_only or not to_update:
+        return {
+            "preview_only": preview_only,
+            "new_leads_checked": len(leads),
+            "leads_with_activity": len(to_update),
+            "contacting_statuscode": contacting_code,
+            "would_update": [lead_map[lid] for lid in to_update[:20]],
+            "message": (
+                f"{len(to_update)} of {len(leads)} 'New' leads have activity and would move to Contacting. "
+                + ("Set preview_only=False to apply." if preview_only else "No leads to update.")
+            ),
+        }
+
+    # Step 4: Update each lead's statuscode to Contacting
+    updated = []
+    errors = []
+    for lead_id in to_update:
+        try:
+            crm_patch("leads", lead_id, {"statuscode": contacting_code})
+            updated.append(lead_map[lead_id])
+        except Exception as e:
+            errors.append({"name": lead_map[lead_id], "error": str(e)})
+
+    return {
+        "success": True,
+        "new_leads_checked": len(leads),
+        "updated": len(updated),
+        "errors": len(errors),
+        "error_details": errors,
+        "contacting_statuscode": contacting_code,
+        "message": (
+            f"Advanced {len(updated)} lead(s) from New → Contacting. "
+            f"{len(errors)} error(s)."
+        ),
+    }

@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from tools.activity_date import sync_last_activity_dates
 from tools.contacts import sync_contact_owners_from_accounts
+from tools.leads import sync_lead_statuses
 
 LOG_FILE = os.path.join(os.path.dirname(__file__), "logs", "sync_activity_dates.log")
 
@@ -65,6 +66,22 @@ if __name__ == "__main__":
         log(f"  SAMPLE: {s['name']} — contact_owner={s['contact_owner']} account_owner={s['account_owner']} match={s['match']}")
     if result.get("error"):
         log(f"  FATAL: {result['error']}")
+    for err in (result.get("error_details") or [])[:5]:
+        log(f"  ERROR: {err.get('name', '')} — {err.get('error', '')}")
+
+    log("Syncing lead statuses (New → Contacting)...")
+    result = sync_lead_statuses()
+    log(
+        f"  lead status: {result.get('updated', 0)} advanced to Contacting, "
+        f"{result.get('errors', 0)} errors "
+        f"(checked {result.get('new_leads_checked', 0)} New leads, "
+        f"{result.get('leads_with_activity', result.get('updated', 0))} had activity)"
+    )
+    if result.get("error"):
+        log(f"  FATAL: {result['error']}")
+        if result.get("available_options"):
+            for opt in result["available_options"]:
+                log(f"    statuscode option: {opt['value']} = {opt['label']}")
     for err in (result.get("error_details") or [])[:5]:
         log(f"  ERROR: {err.get('name', '')} — {err.get('error', '')}")
 
