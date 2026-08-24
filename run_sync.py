@@ -43,7 +43,8 @@ if __name__ == "__main__":
         log(f"Syncing {entity}s...")
         result = sync_last_activity_dates(entity, limit=500)
         log(
-            f"  {entity}: {result.get('updated', 0)} updated, "
+            f"  {entity}: {result.get('updated', 0)} updated "
+            f"({result.get('fallback_matched', 0)} via email fallback), "
             f"{result.get('skipped_no_activity', 0)} skipped, "
             f"{result.get('errors', 0)} errors"
         )

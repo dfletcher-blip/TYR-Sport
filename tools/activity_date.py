@@ -204,12 +204,13 @@ def sync_last_activity_dates(entity: str, limit: int = 5000, preview_only: bool 
     collection = meta["collection"]
     id_field = meta["id_field"]
     name_field = "fullname" if entity != "account" else "name"
+    email_field = "emailaddress1" if entity != "account" else "emailaddress1"
 
-    # Step 1: Fetch all active record IDs for this entity
+    # Step 1: Fetch all active records (include email for fallback matching)
     try:
         record_pages = []
         page_params = {
-            "$select": f"{id_field},{name_field}",
+            "$select": f"{id_field},{name_field},{email_field}",
             "$filter": "statecode eq 0",
             "$top": 2000,
         }
@@ -224,8 +225,13 @@ def sync_last_activity_dates(entity: str, limit: int = 5000, preview_only: bool 
     if not record_pages:
         return {"message": f"No active {entity} records found.", "count": 0}
 
-    # Build lookup: record_id → name
+    # Build lookups
     record_map = {r[id_field]: r.get(name_field, "") for r in record_pages}
+    email_map = {  # email → record_id (for fallback pass)
+        r[email_field].lower().strip(): r[id_field]
+        for r in record_pages
+        if r.get(email_field)
+    }
     all_ids = set(record_map.keys())
 
     # Step 2a: Bulk-fetch activities linked via Regarding field
@@ -242,9 +248,7 @@ def sync_last_activity_dates(entity: str, limit: int = 5000, preview_only: bool 
 
         while act_page.get("@odata.nextLink"):
             act_page = crm_get(_strip_base(act_page["@odata.nextLink"]), {})
-            batch = act_page.get("value", [])
-            activities.extend(batch)
-            # Exit early only when we've seen at least one activity for every record
+            activities.extend(act_page.get("value", []))
             matched_ids = {a.get("_regardingobjectid_value") for a in activities if a.get("_regardingobjectid_value") in all_ids}
             if len(matched_ids) >= len(all_ids):
                 break
@@ -254,14 +258,52 @@ def sync_last_activity_dates(entity: str, limit: int = 5000, preview_only: bool 
             if rid not in all_ids:
                 continue
             date_str = (act.get("createdon") or "")[:10]
-            if not date_str:
-                continue
-            if rid not in latest_by_record or date_str > latest_by_record[rid]:
+            if date_str and (rid not in latest_by_record or date_str > latest_by_record[rid]):
                 latest_by_record[rid] = date_str
 
     except Exception as e:
         return {"error": f"Could not fetch activities: {e}"}
 
+    # Step 2b: Fallback — for unmatched records with email addresses, query
+    # activityparties by addressused. Outreach often leaves _regardingobjectid_value
+    # null but does populate addressused on the email party record.
+    # Cap at 500 per run to avoid timeouts.
+    unmatched_with_email = [
+        r for r in record_pages
+        if r[id_field] not in latest_by_record and r.get(email_field)
+    ]
+    fallback_checked = 0
+    fallback_matched = 0
+    for r in unmatched_with_email[:500]:
+        rid = r[id_field]
+        email = r[email_field].strip()
+        try:
+            parties = crm_get("activityparties", {
+                "$select": "activityid",
+                "$filter": f"addressused eq '{email}'",
+                "$top": 50,
+            }).get("value", [])
+            fallback_checked += 1
+            if not parties:
+                continue
+            # Collect all activityids and fetch their dates
+            act_ids = [p["activityid"] for p in parties if p.get("activityid")]
+            best_date = None
+            for act_id in act_ids:
+                try:
+                    act = crm_get(f"activitypointers({act_id})", {
+                        "$select": "createdon",
+                    })
+                    date_str = (act.get("createdon") or "")[:10]
+                    if date_str and (best_date is None or date_str > best_date):
+                        best_date = date_str
+                except Exception:
+                    continue
+            if best_date:
+                latest_by_record[rid] = best_date
+                fallback_matched += 1
+        except Exception:
+            continue
 
     if preview_only:
         return {
@@ -269,6 +311,8 @@ def sync_last_activity_dates(entity: str, limit: int = 5000, preview_only: bool 
             "entity": entity,
             "would_update": len(latest_by_record),
             "no_activity": len(all_ids) - len(latest_by_record),
+            "fallback_checked": fallback_checked,
+            "fallback_matched": fallback_matched,
             "records": [
                 {"id": rid, "name": record_map[rid], "date": d}
                 for rid, d in latest_by_record.items()
@@ -294,10 +338,13 @@ def sync_last_activity_dates(entity: str, limit: int = 5000, preview_only: bool 
         "total_processed": len(all_ids),
         "updated": len(updated),
         "skipped_no_activity": skipped_count,
+        "fallback_checked": fallback_checked,
+        "fallback_matched": fallback_matched,
         "errors": len(errors),
         "error_details": errors,
         "message": (
-            f"Sync complete for {entity}: {len(updated)} updated, "
+            f"Sync complete for {entity}: {len(updated)} updated "
+            f"({fallback_matched} via email fallback), "
             f"{skipped_count} skipped (no activity), {len(errors)} errors."
         ),
     }
