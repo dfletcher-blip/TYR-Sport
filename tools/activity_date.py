@@ -264,46 +264,72 @@ def sync_last_activity_dates(entity: str, limit: int = 5000, preview_only: bool 
     except Exception as e:
         return {"error": f"Could not fetch activities: {e}"}
 
-    # Step 2b: Fallback — for unmatched records with email addresses, query
-    # activityparties by addressused. Outreach often leaves _regardingobjectid_value
-    # null but does populate addressused on the email party record.
-    # Cap at 500 per run to avoid timeouts.
-    unmatched_with_email = [
-        r for r in record_pages
-        if r[id_field] not in latest_by_record and r.get(email_field)
-    ]
+    # Step 2b: Fallback via activityparties.addressused
+    # Outreach leaves _regardingobjectid_value null but populates addressused.
+    # Bulk-fetch all activityparties rows (addressused + activityid), build an
+    # email->latest-activityid map, then cross-reference our unmatched records.
+    # This is one bulk scan instead of one query per record.
     fallback_checked = 0
     fallback_matched = 0
-    for r in unmatched_with_email[:500]:
-        rid = r[id_field]
-        email = r[email_field].strip()
+    if entity != "account":  # accounts rarely have Outreach emails
         try:
-            parties = crm_get("activityparties", {
-                "$select": "activityid",
-                "$filter": f"addressused eq '{email}'",
-                "$top": 50,
-            }).get("value", [])
-            fallback_checked += 1
-            if not parties:
-                continue
-            # Collect all activityids and fetch their dates
-            act_ids = [p["activityid"] for p in parties if p.get("activityid")]
-            best_date = None
-            for act_id in act_ids:
-                try:
-                    act = crm_get(f"activitypointers({act_id})", {
-                        "$select": "createdon",
-                    })
-                    date_str = (act.get("createdon") or "")[:10]
-                    if date_str and (best_date is None or date_str > best_date):
-                        best_date = date_str
-                except Exception:
-                    continue
-            if best_date:
-                latest_by_record[rid] = best_date
-                fallback_matched += 1
+            # Build set of emails we care about (unmatched records only)
+            unmatched_emails = {
+                r[email_field].lower().strip(): r[id_field]
+                for r in record_pages
+                if r[id_field] not in latest_by_record and r.get(email_field)
+            }
+            fallback_checked = len(unmatched_emails)
+
+            if unmatched_emails:
+                # Scan activityparties for matching email addresses.
+                # Fetch in pages; stop once we have enough or hit 20k rows.
+                email_to_date = {}  # email -> best date string found
+                ap_page = crm_get("activityparties", {
+                    "$select": "activityid,addressused",
+                    "$filter": "addressused ne null",
+                    "$top": 2000,
+                })
+                ap_rows = ap_page.get("value", [])
+                pages_fetched = 1
+
+                while True:
+                    for row in ap_rows:
+                        addr = (row.get("addressused") or "").lower().strip()
+                        if addr not in unmatched_emails:
+                            continue
+                        act_id = row.get("activityid")
+                        if not act_id:
+                            continue
+                        # Look up the activity's createdon
+                        try:
+                            act = crm_get(f"activitypointers({act_id})", {
+                                "$select": "createdon",
+                            })
+                            date_str = (act.get("createdon") or "")[:10]
+                            if date_str:
+                                prev = email_to_date.get(addr)
+                                if prev is None or date_str > prev:
+                                    email_to_date[addr] = date_str
+                        except Exception:
+                            pass
+
+                    next_link = ap_page.get("@odata.nextLink")
+                    if not next_link or pages_fetched >= 10:  # cap at 20k party rows
+                        break
+                    ap_page = crm_get(_strip_base(next_link), {})
+                    ap_rows = ap_page.get("value", [])
+                    pages_fetched += 1
+
+                # Apply results to latest_by_record
+                for email, rid in unmatched_emails.items():
+                    date_str = email_to_date.get(email)
+                    if date_str:
+                        latest_by_record[rid] = date_str
+                        fallback_matched += 1
+
         except Exception:
-            continue
+            pass  # fallback failure is non-fatal; main scan results still apply
 
     if preview_only:
         return {
