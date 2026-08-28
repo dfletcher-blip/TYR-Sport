@@ -73,11 +73,26 @@ try:
         print(f"  entitymapid: {map_id}")
         print()
         print("  AttributeMaps:")
-        attr_data = get("attributemaps", {
-            "$select": "attributemapid,sourceattributename,targetattributename",
-            "$filter": f"entitymapid_entitymap eq {map_id}",
-        })
-        attrs = attr_data.get("value", [])
+        try:
+            attr_data = get("attributemaps", {
+                "$select": "attributemapid,sourceattributename,targetattributename",
+                "$filter": f"_entitymapid_value eq {map_id}",
+            })
+            attrs = attr_data.get("value", [])
+        except RuntimeError as inner_e:
+            print(f"    ! Filtered lookup failed ({inner_e}); falling back to unfiltered fetch + client-side match.")
+            all_data = get("attributemaps", {
+                "$select": "attributemapid,sourceattributename,targetattributename",
+            })
+            all_attrs = all_data.get("value", [])
+            attrs = []
+            for a in all_attrs:
+                for k, v in a.items():
+                    if "entitymapid" in k.lower() and str(v).lower() == str(map_id).lower():
+                        attrs.append(a)
+                        break
+            if not attrs and all_attrs:
+                print(f"    (Couldn't match by lookup value; here are the raw keys on one record for reference: {list(all_attrs[0].keys())})")
         if not attrs:
             print("    ! No AttributeMaps found for this EntityMap.")
         for a in attrs:
