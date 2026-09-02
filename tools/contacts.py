@@ -314,21 +314,25 @@ def sync_contact_owners_from_accounts(preview_only: bool = False, limit: int = 5
     # field shown in the UI is a custom lookup rather than the standard ownerid.
     account_ids = list({_parent_acct(c) for c in contacts if _parent_acct(c)})
 
-    account_owner_map = {}       # account_id → owner_id (standard ownerid)
-    account_salesrep_map = {}    # account_id → salesrep_id (custom field, may be null)
+    account_owner_map = {}    # account_id → owner_id
+    account_salesrep_map = {} # account_id → custom salesrep id (populated if field found)
     try:
         batch_size = 100
         for i in range(0, len(account_ids), batch_size):
             batch = account_ids[i:i + batch_size]
             filter_str = " or ".join(f"accountid eq '{aid}'" for aid in batch)
             accts = crm_get("accounts", {
-                "$select": "accountid,_ownerid_value,_tyr_salesrepresentativeid_value",
+                "$select": "accountid,_ownerid_value",
                 "$filter": filter_str,
                 "$top": batch_size,
             }).get("value", [])
             for a in accts:
                 account_owner_map[a["accountid"]] = a.get("_ownerid_value")
-                account_salesrep_map[a["accountid"]] = a.get("_tyr_salesrepresentativeid_value")
+                # Capture any lookup field whose key contains "salesrep" or "rep"
+                for k, v in a.items():
+                    if v and k.endswith("_value") and "salesrep" in k.lower():
+                        account_salesrep_map[a["accountid"]] = v
+                        break
     except Exception as e:
         return {"error": f"Could not fetch account owners: {e}"}
 
