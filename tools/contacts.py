@@ -309,22 +309,26 @@ def sync_contact_owners_from_accounts(preview_only: bool = False, limit: int = 5
     def _parent_acct(record):
         return record.get("_parentcustomerid_value")
 
-    # Collect unique account IDs and fetch their owners in bulk
+    # Collect unique account IDs and fetch their owners in bulk.
+    # Also fetch tyr_salesrepresentativeid in case the "Sales Representative"
+    # field shown in the UI is a custom lookup rather than the standard ownerid.
     account_ids = list({_parent_acct(c) for c in contacts if _parent_acct(c)})
 
-    account_owner_map = {}  # account_id → owner_id
+    account_owner_map = {}       # account_id → owner_id (standard ownerid)
+    account_salesrep_map = {}    # account_id → salesrep_id (custom field, may be null)
     try:
         batch_size = 100
         for i in range(0, len(account_ids), batch_size):
             batch = account_ids[i:i + batch_size]
             filter_str = " or ".join(f"accountid eq '{aid}'" for aid in batch)
             accts = crm_get("accounts", {
-                "$select": "accountid,_ownerid_value",
+                "$select": "accountid,_ownerid_value,_tyr_salesrepresentativeid_value",
                 "$filter": filter_str,
                 "$top": batch_size,
             }).get("value", [])
             for a in accts:
                 account_owner_map[a["accountid"]] = a.get("_ownerid_value")
+                account_salesrep_map[a["accountid"]] = a.get("_tyr_salesrepresentativeid_value")
     except Exception as e:
         return {"error": f"Could not fetch account owners: {e}"}
 
@@ -332,11 +336,20 @@ def sync_contact_owners_from_accounts(preview_only: bool = False, limit: int = 5
     null_contact_owners = sum(1 for c in contacts if not _owner(c))
     null_acct_owners = sum(1 for aid in account_ids if not account_owner_map.get(aid))
 
-    # Find contacts where owner doesn't match their account's owner
+    # Determine which account field drives contact ownership.
+    # If the custom tyr_salesrepresentativeid field is populated on any account,
+    # use that; otherwise fall back to the standard ownerid.
+    any_salesrep = any(v for v in account_salesrep_map.values() if v)
+    use_salesrep = any_salesrep
+
+    # Find contacts where owner doesn't match the account's designated owner
     to_update = []
     for c in contacts:
         acct_id = _parent_acct(c)
-        acct_owner = account_owner_map.get(acct_id)
+        if use_salesrep:
+            acct_owner = account_salesrep_map.get(acct_id) or account_owner_map.get(acct_id)
+        else:
+            acct_owner = account_owner_map.get(acct_id)
         contact_owner = _owner(c)
         if acct_owner and acct_owner != contact_owner:
             to_update.append({
@@ -353,7 +366,12 @@ def sync_contact_owners_from_accounts(preview_only: bool = False, limit: int = 5
             "name": c.get("fullname", ""),
             "contact_owner": _owner(c),
             "account_owner": account_owner_map.get(_parent_acct(c)),
-            "match": _owner(c) == account_owner_map.get(_parent_acct(c)),
+            "account_salesrep": account_salesrep_map.get(_parent_acct(c)),
+            "using_salesrep_field": use_salesrep,
+            "match": _owner(c) == (
+                (account_salesrep_map.get(_parent_acct(c)) or account_owner_map.get(_parent_acct(c)))
+                if use_salesrep else account_owner_map.get(_parent_acct(c))
+            ),
         }
         for c in contacts[:3]
     ]

@@ -64,7 +64,7 @@ if __name__ == "__main__":
     if result.get("message"):
         log(f"  {result['message']}")
     for s in (result.get("sample_comparisons") or []):
-        log(f"  SAMPLE: {s['name']} — contact_owner={s['contact_owner']} account_owner={s['account_owner']} match={s['match']}")
+        log(f"  SAMPLE: {s['name']} — contact_owner={s['contact_owner']} account_owner={s['account_owner']} account_salesrep={s.get('account_salesrep')} using_salesrep={s.get('using_salesrep_field')} match={s['match']}")
     if result.get("error"):
         log(f"  FATAL: {result['error']}")
     for err in (result.get("error_details") or [])[:5]:
