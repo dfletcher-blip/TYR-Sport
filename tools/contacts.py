@@ -279,18 +279,18 @@ def sync_contact_owners_from_accounts(preview_only: bool = False, limit: int = 5
     # Select the navigation field name (without underscores) so D365 reliably
     # returns the backing _value GUIDs in the response.
     try:
+        from config.crm_connection import DYNAMICS_URL
+        base_prefix = f"{DYNAMICS_URL}/api/data/v9.2/"
         contacts = []
         page = crm_get("contacts", {
             "$select": "contactid,fullname,_ownerid_value,_parentcustomerid_value",
             "$filter": "statecode eq 0 and _parentcustomerid_value ne null",
             "$top": 2000,
+            "$orderby": "contactid asc",
         })
         contacts.extend(page.get("value", []))
         next_link = page.get("@odata.nextLink")
         while next_link and len(contacts) < limit:
-            # nextLink is a full URL; strip the base so crm_get can prefix it
-            from config.crm_connection import DYNAMICS_URL
-            base_prefix = f"{DYNAMICS_URL}/api/data/v9.2/"
             relative = next_link[len(base_prefix):] if next_link.startswith(base_prefix) else next_link
             page = crm_get(relative, {})
             contacts.extend(page.get("value", []))
