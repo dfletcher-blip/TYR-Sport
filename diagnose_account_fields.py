@@ -15,7 +15,6 @@ print("=== Foot Locker account — all fields ===")
 accts = crm_get("accounts", {
     "$filter": "name eq 'FOOT LOCKER'",
     "$top": 1,
-    "$expand": "ownerid($select=fullname)",
 }).get("value", [])
 
 if not accts:
