@@ -488,8 +488,15 @@ def sync_contact_tyr_fields_from_accounts(preview_only: bool = False, limit: int
         acct_id = c.get("_parentcustomerid_value")
         acct = account_map.get(acct_id, {})
         updates = {}
-        if acct.get("tyr_tyrtype") is not None and c.get("tyr_tyrtype") != acct.get("tyr_tyrtype"):
-            updates["tyr_tyrtype"] = acct["tyr_tyrtype"]
+        acct_tyrtype = acct.get("tyr_tyrtype")
+        if acct_tyrtype is not None and c.get("tyr_tyrtype") != acct_tyrtype:
+            # tyr_tyrtype may be a multi-select on accounts but int32 on contacts;
+            # send only the first value when the account has multiple options selected
+            if isinstance(acct_tyrtype, str) and "," in acct_tyrtype:
+                first_val = int(acct_tyrtype.split(",")[0].strip())
+                updates["tyr_tyrtype"] = first_val
+            else:
+                updates["tyr_tyrtype"] = acct_tyrtype
         if acct.get("tyr_tyrentity") is not None and c.get("tyr_tyrentity") != acct.get("tyr_tyrentity"):
             updates["tyr_tyrentity"] = acct["tyr_tyrentity"]
         if updates:
