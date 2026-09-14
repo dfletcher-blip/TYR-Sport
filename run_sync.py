@@ -21,7 +21,7 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(__file__))
 
 from tools.activity_date import sync_last_activity_dates
-from tools.contacts import sync_contact_owners_from_accounts
+from tools.contacts import sync_contact_owners_from_accounts, sync_contact_tyr_fields_from_accounts
 from tools.leads import sync_lead_statuses
 
 LOG_FILE = os.path.join(os.path.dirname(__file__), "logs", "sync_activity_dates.log")
@@ -65,6 +65,20 @@ if __name__ == "__main__":
         log(f"  {result['message']}")
     for s in (result.get("sample_comparisons") or []):
         log(f"  SAMPLE: {s['name']} — contact_owner={s['contact_owner']} account_owner={s['account_owner']} account_salesrep={s.get('account_salesrep')} using_salesrep={s.get('using_salesrep_field')} match={s['match']}")
+    if result.get("error"):
+        log(f"  FATAL: {result['error']}")
+    for err in (result.get("error_details") or [])[:5]:
+        log(f"  ERROR: {err.get('name', '')} — {err.get('error', '')}")
+
+    log("Syncing contact TYR type/entity from accounts...")
+    result = sync_contact_tyr_fields_from_accounts()
+    log(
+        f"  TYR fields: {result.get('updated', 0)} updated, "
+        f"{result.get('errors', 0)} errors "
+        f"(checked {result.get('contacts_checked', 0)} contacts / {result.get('accounts_checked', 0)} accounts)"
+    )
+    if result.get("message"):
+        log(f"  {result['message']}")
     if result.get("error"):
         log(f"  FATAL: {result['error']}")
     for err in (result.get("error_details") or [])[:5]:

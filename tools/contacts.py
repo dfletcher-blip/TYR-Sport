@@ -424,3 +424,113 @@ def sync_contact_owners_from_accounts(preview_only: bool = False, limit: int = 5
         "null_account_owners": null_acct_owners,
         "message": f"Updated {len(updated)} contact owner(s) to match their account. {len(errors)} error(s).",
     }
+
+
+def sync_contact_tyr_fields_from_accounts(preview_only: bool = False, limit: int = 5000) -> dict:
+    """
+    Sync tyr_tyrtype and tyr_tyrentity on contacts to match their parent account.
+
+    For every active contact with a parent account, if either field differs
+    from the account's value, update the contact to match.
+
+    preview_only: if True, show what would change without writing
+    limit: max contacts to process (default 5000)
+    """
+    try:
+        from config.crm_connection import DYNAMICS_URL
+        base_prefix = f"{DYNAMICS_URL}/api/data/v9.2/"
+
+        contacts = []
+        page = crm_get("contacts", {
+            "$select": "contactid,fullname,tyr_tyrtype,tyr_tyrentity,_parentcustomerid_value",
+            "$filter": "statecode eq 0 and _parentcustomerid_value ne null",
+            "$top": 2000,
+            "$orderby": "contactid asc",
+        })
+        contacts.extend(page.get("value", []))
+        next_link = page.get("@odata.nextLink")
+        while next_link and len(contacts) < limit:
+            relative = next_link[len(base_prefix):] if next_link.startswith(base_prefix) else next_link
+            page = crm_get(relative, {})
+            contacts.extend(page.get("value", []))
+            next_link = page.get("@odata.nextLink")
+    except Exception as e:
+        return {"error": f"Could not fetch contacts: {e}"}
+
+    if not contacts:
+        return {"message": "No active contacts with a parent account found.", "count": 0}
+
+    # Collect unique account IDs and fetch their tyr fields in bulk
+    account_ids = list({c.get("_parentcustomerid_value") for c in contacts if c.get("_parentcustomerid_value")})
+    account_map = {}  # account_id -> {tyr_tyrtype, tyr_tyrentity}
+
+    try:
+        batch_size = 100
+        for i in range(0, len(account_ids), batch_size):
+            batch = account_ids[i:i + batch_size]
+            filter_str = " or ".join(f"accountid eq '{aid}'" for aid in batch)
+            accts = crm_get("accounts", {
+                "$select": "accountid,tyr_tyrtype,tyr_tyrentity",
+                "$filter": filter_str,
+                "$top": batch_size,
+            }).get("value", [])
+            for a in accts:
+                account_map[a["accountid"]] = {
+                    "tyr_tyrtype": a.get("tyr_tyrtype"),
+                    "tyr_tyrentity": a.get("tyr_tyrentity"),
+                }
+    except Exception as e:
+        return {"error": f"Could not fetch account tyr fields: {e}"}
+
+    # Find contacts where tyr fields don't match their account
+    to_update = []
+    for c in contacts:
+        acct_id = c.get("_parentcustomerid_value")
+        acct = account_map.get(acct_id, {})
+        updates = {}
+        if acct.get("tyr_tyrtype") is not None and c.get("tyr_tyrtype") != acct.get("tyr_tyrtype"):
+            updates["tyr_tyrtype"] = acct["tyr_tyrtype"]
+        if acct.get("tyr_tyrentity") is not None and c.get("tyr_tyrentity") != acct.get("tyr_tyrentity"):
+            updates["tyr_tyrentity"] = acct["tyr_tyrentity"]
+        if updates:
+            to_update.append({
+                "contactid": c["contactid"],
+                "name": c.get("fullname", ""),
+                "updates": updates,
+            })
+
+    if preview_only or not to_update:
+        return {
+            "preview_only": preview_only,
+            "contacts_checked": len(contacts),
+            "accounts_checked": len(account_ids),
+            "contacts_to_update": len(to_update),
+            "changes": [
+                {"contact": r["name"], "updates": r["updates"]}
+                for r in to_update[:50]
+            ],
+            "message": (
+                f"Checked {len(contacts)} contacts against {len(account_ids)} accounts. "
+                f"{len(to_update)} contact(s) have mismatched TYR type/entity. "
+                + ("Set preview_only=False to apply." if preview_only else "No changes needed.")
+            ),
+        }
+
+    # Apply updates
+    updated, errors = [], []
+    for r in to_update:
+        try:
+            crm_patch("contacts", r["contactid"], r["updates"])
+            updated.append(r["name"])
+        except Exception as e:
+            errors.append({"name": r["name"], "error": str(e)})
+
+    return {
+        "success": True,
+        "contacts_checked": len(contacts),
+        "accounts_checked": len(account_ids),
+        "updated": len(updated),
+        "errors": len(errors),
+        "error_details": errors,
+        "message": f"Updated {len(updated)} contact(s) TYR type/entity to match their account. {len(errors)} error(s).",
+    }
