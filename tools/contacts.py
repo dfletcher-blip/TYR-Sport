@@ -524,13 +524,22 @@ def sync_contact_tyr_fields_from_accounts(preview_only: bool = False, limit: int
         }
 
     # Apply updates
+    import time
     updated, errors = [], []
     for r in to_update:
-        try:
-            crm_patch("contacts", r["contactid"], r["updates"])
-            updated.append(r["name"])
-        except Exception as e:
-            errors.append({"name": r["name"], "error": str(e)})
+        last_err = None
+        for attempt in range(3):
+            try:
+                crm_patch("contacts", r["contactid"], r["updates"])
+                updated.append(r["name"])
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+        if last_err is not None:
+            errors.append({"name": r["name"], "error": str(last_err)})
 
     return {
         "success": True,
