@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""
-Diagnose why tyr_tyrtype / tyr_tyrentity aren't sticking on contacts.
-Run from C:\Users\dfletcher\TYR-Sport:
-  python diagnose_contact_fields.py
-"""
+# Diagnose why tyr_tyrtype / tyr_tyrentity are not sticking on contacts.
 import os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 from dotenv import load_dotenv
