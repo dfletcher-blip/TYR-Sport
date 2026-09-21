@@ -89,7 +89,7 @@ for entity, state_field, id_field, name_field, type_filter, entity_filter in [
      f"tyr_tyrtype eq {TYR_TYPE_RUN_SPECIALTY}",
      f"tyr_tyrentity eq {TYR_ENTITY_USA}"),
     ("leads",    "address1_stateorprovince", "leadid",    "fullname",
-     f"tyr_tyrtype eq '{TYR_TYPE_RUN_SPECIALTY}'",
+     f"contains(tyr_tyrtype,'{TYR_TYPE_RUN_SPECIALTY}')",
      f"tyr_tyrentity eq {TYR_ENTITY_USA}"),
 ]:
     print(f"\n=== Processing {entity} ===")
