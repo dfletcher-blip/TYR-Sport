@@ -107,7 +107,8 @@ def fetch_all(entity, params, limit=5000):
     return records
 
 # ── Process contacts and leads ──────────────────────────────────────────────
-TYR_TYPE_RUN_SPECIALTY = 935650018   # integer value for Run Specialty
+TYR_TYPE_RUN_SPECIALTY         = 935650018   # integer value for Run Specialty (contacts)
+TYR_TYPE_RUN_SPECIALTY_LEAD    = 935650016   # string value for Run Specialty (leads)
 TYR_ENTITY_USA         = 935650000   # integer value for USA
 
 SKIP_OWNERS = {skip_brandon_id, skip_bill_id}
@@ -120,7 +121,7 @@ for entity, state_field, id_field, name_field, type_filter, entity_filter in [
      f"tyr_tyrtype eq {TYR_TYPE_RUN_SPECIALTY}",
      f"tyr_tyrentity eq {TYR_ENTITY_USA}"),
     ("leads",    "address1_stateorprovince", "leadid",    "fullname",
-     f"contains(tyr_tyrtype,'{TYR_TYPE_RUN_SPECIALTY}')",
+     f"contains(tyr_tyrtype,'{TYR_TYPE_RUN_SPECIALTY_LEAD}')",
      f"tyr_tyrentity eq {TYR_ENTITY_USA}"),
 ]:
     print(f"\n=== Processing {entity} ===")
