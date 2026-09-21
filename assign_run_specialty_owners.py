@@ -84,19 +84,21 @@ SKIP_OWNERS = {skip_brandon_id, skip_bill_id}
 totals = {"updated": 0, "skipped_owner": 0, "skipped_no_state": 0,
           "skipped_no_region": 0, "errors": 0}
 
-for entity, state_field, id_field, name_field, tyrtype_filter in [
+for entity, state_field, id_field, name_field, type_filter, entity_filter in [
     ("contacts", "address1_stateorprovince", "contactid", "fullname",
-     f"tyr_tyrtype eq {TYR_TYPE_RUN_SPECIALTY}"),
+     f"tyr_tyrtype eq {TYR_TYPE_RUN_SPECIALTY}",
+     f"tyr_tyrentity eq {TYR_ENTITY_USA}"),
     ("leads",    "address1_stateorprovince", "leadid",    "fullname",
-     f"tyr_tyrtype eq '{TYR_TYPE_RUN_SPECIALTY}'"),
+     f"tyr_tyrtype eq '{TYR_TYPE_RUN_SPECIALTY}'",
+     f"tyr_tyrentity eq '{TYR_ENTITY_USA}'"),
 ]:
     print(f"\n=== Processing {entity} ===")
     records = fetch_all(entity, {
         "$select": f"{id_field},{name_field},{state_field},tyr_tyrtype,tyr_tyrentity,_ownerid_value",
         "$filter": (
             f"statecode eq 0 "
-            f"and {tyrtype_filter} "
-            f"and tyr_tyrentity eq {TYR_ENTITY_USA}"
+            f"and {type_filter} "
+            f"and {entity_filter}"
         ),
         "$top": 2000,
         "$orderby": f"{id_field} asc",
