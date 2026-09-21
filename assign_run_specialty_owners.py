@@ -27,6 +27,37 @@ REGION_MAP = {
     "RI": "Northeast", "NH": "Northeast", "VT": "Northeast", "ME": "Northeast",
 }
 
+# Full state name → abbreviation
+STATE_NAME_TO_ABBR = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
+    "california": "CA", "colorado": "CO", "connecticut": "CT", "delaware": "DE",
+    "district of columbia": "DC", "florida": "FL", "georgia": "GA", "hawaii": "HI",
+    "idaho": "ID", "illinois": "IL", "indiana": "IN", "iowa": "IA",
+    "kansas": "KS", "kentucky": "KY", "louisiana": "LA", "maine": "ME",
+    "maryland": "MD", "massachusetts": "MA", "michigan": "MI", "minnesota": "MN",
+    "mississippi": "MS", "missouri": "MO", "montana": "MT", "nebraska": "NE",
+    "nevada": "NV", "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM",
+    "new york": "NY", "north carolina": "NC", "north dakota": "ND", "ohio": "OH",
+    "oklahoma": "OK", "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI",
+    "south carolina": "SC", "south dakota": "SD", "tennessee": "TN", "texas": "TX",
+    "utah": "UT", "vermont": "VT", "virginia": "VA", "washington": "WA",
+    "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY",
+}
+
+def normalize_state(raw):
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    # Already a 2-letter abbreviation
+    if len(s) <= 2:
+        return s.upper()
+    # Full name lookup
+    abbr = STATE_NAME_TO_ABBR.get(s.lower())
+    if abbr:
+        return abbr
+    # Fallback: first 2 chars (handles e.g. "TX - Texas")
+    return s[:2].upper()
+
 PREVIEW = "--preview" in sys.argv
 
 # ── Look up rep GUIDs ───────────────────────────────────────────────────────
@@ -89,16 +120,16 @@ for entity, state_field, id_field, name_field, type_filter, entity_filter in [
      f"tyr_tyrtype eq {TYR_TYPE_RUN_SPECIALTY}",
      f"tyr_tyrentity eq {TYR_ENTITY_USA}"),
     ("leads",    "address1_stateorprovince", "leadid",    "fullname",
-     f"contains(tyr_tyrtype,'{TYR_TYPE_RUN_SPECIALTY}')",
+     None,
      f"tyr_tyrentity eq {TYR_ENTITY_USA}"),
 ]:
     print(f"\n=== Processing {entity} ===")
     records = fetch_all(entity, {
         "$select": f"{id_field},{name_field},{state_field},tyr_tyrtype,tyr_tyrentity,_ownerid_value",
         "$filter": (
-            f"statecode eq 0 "
-            f"and {type_filter} "
-            f"and {entity_filter}"
+            f"statecode eq 0 and {entity_filter}"
+            if type_filter is None
+            else f"statecode eq 0 and {type_filter} and {entity_filter}"
         ),
         "$top": 2000,
         "$orderby": f"{id_field} asc",
@@ -109,20 +140,19 @@ for entity, state_field, id_field, name_field, type_filter, entity_filter in [
         rid   = rec[id_field]
         rname = rec.get(name_field, "")
         owner = rec.get("_ownerid_value", "")
-        state = (rec.get(state_field) or "").strip().upper()
+        raw_state = rec.get(state_field) or ""
 
         # Skip if owned by Brandon or Bill
         if owner in SKIP_OWNERS:
             totals["skipped_owner"] += 1
             continue
 
-        if not state:
+        if not raw_state.strip():
             totals["skipped_no_state"] += 1
             print(f"  SKIP (no state): {rname}")
             continue
 
-        # Normalize common state spellings
-        state = state[:2]  # take first 2 chars in case full name slips through
+        state = normalize_state(raw_state)
 
         region = REGION_MAP.get(state)
         if not region:
