@@ -131,7 +131,7 @@ for entity, state_field, id_field, name_field, type_filter, entity_filter in [
             if type_filter is None
             else f"statecode eq 0 and {type_filter} and {entity_filter}"
         ),
-        "$top": 2000,
+        "$top": 50000,
         "$orderby": f"{id_field} asc",
     })
     print(f"  Found {len(records)} Run Specialty / USA {entity}")
